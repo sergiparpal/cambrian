@@ -694,8 +694,17 @@ def ingest(
     """
     spec, econfig = config.load_axes_and_engine(axes_source)
     sess = Session(project, home=home, seed=seed).ensure()
+    cand_list = _parse_candidates(candidates)
+    if cand_list:
+        # Force the embedder's lazy model load BEFORE taking the project lock: the first-ever load
+        # can DOWNLOAD the static model (~120 MB), and the lock's staleness window (_LOCK_STALE,
+        # 60s) has no heartbeat — a slow download inside the lock would let a concurrent session
+        # judge the lock abandoned, steal it, and interleave the read-modify-write this lock exists
+        # to serialize. embed([]) resolves the model and returns an empty (0, dim) array; once
+        # loaded this is a no-op on every later cycle.
+        sess.embedder.embed([])
     with sess.state.project_lock():
-        return _ingest_locked(sess, spec, econfig, project, candidates, seed)
+        return _ingest_locked(sess, spec, econfig, project, cand_list, seed)
 
 
 def _ingest_locked(
@@ -703,10 +712,14 @@ def _ingest_locked(
     spec: AxesSpec,
     econfig: "config.EngineConfig",
     project: str,
-    candidates,
+    cand_list: List[Candidate],
     seed: int,
 ) -> Dict[str, Any]:
-    """One ingest cycle, run while holding the project lock (see :func:`ingest`)."""
+    """One ingest cycle, run while holding the project lock (see :func:`ingest`).
+
+    ``cand_list`` arrives already parsed — :func:`ingest` parses it (and warm-loads the embedder)
+    OUTSIDE the lock so no slow, lock-irrelevant work runs inside the serialized section.
+    """
     state = sess.state
     # The axes passed in are authoritative for this cycle; snapshot them only on
     # a fresh project so an existing project keeps its original resolved axes.
@@ -745,7 +758,6 @@ def _ingest_locked(
                 ),
             )
 
-    cand_list = _parse_candidates(candidates)
     arc = archive_mod.Archive.from_dict(spec, state.read_archive())
     if not cand_list:
         return _empty_cycle(state, arc, spec, econfig)

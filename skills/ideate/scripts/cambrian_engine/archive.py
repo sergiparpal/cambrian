@@ -16,6 +16,7 @@ already-diverse niche.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,11 +27,36 @@ from .config import Axis, AxesSpec, Niche
 
 # Niche-key slug: lowercase alnum-only, for stable categorical bucket labels.
 _NICHE_SLUG_RE = re.compile(r"[^a-z0-9]+")
+# The bucket for a genuinely absent categorical value (see `axis_bucket`).
+_MISSING_BUCKET = "none"
 
 
 def _niche_slug(value: Any) -> str:
-    s = _NICHE_SLUG_RE.sub("-", str(value).strip().lower()).strip("-")
-    return s or "none"
+    """Stable categorical bucket label for one descriptor value.
+
+    A value whose every character is outside ``[a-z0-9]`` slugs to the empty string. Returning a
+    shared literal there (as this used to) collapsed EVERY such value into one MAP-Elites niche —
+    and since a niche holds one elite, ``Niche``'s elite rule then evicts all but the fittest. On a
+    non-Latin brief (the case the default multilingual ``potion-multilingual-128M`` embedder exists
+    to serve) that silently voided the categorical coverage axes: ``芸術`` and ``成長`` both bucketed
+    as ``none``, so two genuinely different ideas fought over one cell. Distinct raw values must get
+    distinct buckets, so hash the raw value when the slug carries no information.
+
+    The sibling ``state._path_slug`` already guards this exact class for filesystem paths; this is
+    the same rule, narrowed: only an EMPTY slug is disambiguated, so every ordinary ASCII label
+    (``"Young Adults"`` -> ``"young-adults"``) keeps its readable, backward-compatible bucket. An
+    empty/whitespace value is genuinely missing and shares ``_MISSING_BUCKET`` with an omitted one —
+    as does the literal string ``"none"``, which means the same thing.
+    """
+    raw = str(value).strip()
+    s = _NICHE_SLUG_RE.sub("-", raw.lower()).strip("-")
+    if s:
+        return s
+    if not raw:
+        return _MISSING_BUCKET
+    # sha1 over utf-8 bytes: deterministic ACROSS PROCESSES, unlike hash(), which is
+    # PYTHONHASHSEED-salted — niche ids must be stable between the CLI's separate invocations.
+    return f"x-{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:8]}"
 
 
 def _l2_rows(mat: np.ndarray) -> np.ndarray:
@@ -138,10 +164,20 @@ class CVTNicher:
 
 def continuous_bin(axis: Axis, value: Any) -> int:
     lo, hi = axis.range  # type: ignore[misc]
+    # A MISSING or un-coercible value maps to the NEUTRAL mid-bin, never bin 0. Bin 0 is a real
+    # extreme (for `feasibility` it is "far-fetched"), so defaulting a candidate that simply OMITS
+    # the axis there would (a) silently bias every such descriptor toward that extreme — the
+    # opposite of the coverage axis's intent — and (b) collapse all omitting candidates into ONE
+    # bin, dissolving the "one elite per bin" coverage guarantee. A middle default keeps the archive
+    # honest when the agent forgets the axis; the guarantee is still only fully realized when the
+    # descriptors DO carry it. (A finite-but-out-of-range GARBAGE value still clamps below; a
+    # non-finite NaN/inf — an agent emitting "nan" — stays bin 0: that is a bad value, not an
+    # omitted one.)
+    mid = max(0, axis.bins // 2)
     try:
         v = float(value)
     except (TypeError, ValueError):
-        return 0
+        return mid
     # A non-finite value (NaN/inf, e.g. an agent emitting "nan") would make
     # ``int(frac * bins)`` raise; treat it as an out-of-range value -> bin 0.
     if not math.isfinite(v):
@@ -156,7 +192,7 @@ def continuous_bin(axis: Axis, value: Any) -> int:
 def axis_bucket(axis: Axis, value: Any, open_cell: Optional[int] = None) -> str:
     """Bucket label for one axis (used both for the niche key and display)."""
     if axis.type == "categorical":
-        return _niche_slug(value if value is not None else "none")
+        return _MISSING_BUCKET if value is None else _niche_slug(value)
     if axis.type == "continuous":
         return f"b{continuous_bin(axis, value)}"
     # open

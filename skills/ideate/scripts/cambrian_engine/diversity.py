@@ -140,6 +140,18 @@ def bounded_quality(
     clipped to ``[lo, hi]`` so quality can never dominate the kernel.
     """
     q = np.asarray(quality, dtype=np.float64).reshape(-1)
+    # Sanitize non-finite fitness (NaN/±inf) in the single home. Left in, they poison qmin/qmax
+    # and the affine rescale below into NaN quality, which propagates through build_kernel and
+    # makes greedy DPP re-select an already-picked index — the SAME idea twice in one slate.
+    # Map any non-finite into the observed FINITE range; if nothing is finite, treat quality as
+    # uniform, which is exactly what the equal-fitness branch below already does (pure diversity).
+    if not np.all(np.isfinite(q)):
+        finite = q[np.isfinite(q)]
+        if finite.size:
+            fmin, fmax = float(finite.min()), float(finite.max())
+            q = np.nan_to_num(q, nan=fmin, posinf=fmax, neginf=fmin)
+        else:
+            q = np.ones_like(q)
     qmin, qmax = float(q.min()), float(q.max())
     if qmax - qmin < 1e-12:
         rescaled = np.ones_like(q)
