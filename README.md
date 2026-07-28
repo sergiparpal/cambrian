@@ -258,11 +258,18 @@ axes:
   - {name: tone, type: categorical}
   - {name: imagery, type: categorical}
   - {name: length, type: continuous, range: [1, 4]}
+  - {name: feasibility, type: continuous, range: [0, 1]}   # far-fetched <-> usable (coverage axis)
   - {name: construction, type: open, primary_novelty: true}
 judge_rubric: references/judge_rubric.md
 slate_size: 6
 candidates_per_generation: 12
 ```
+
+Exactly one axis carries `primary_novelty: true` — the `open` axis the engine niches
+mechanisms on. A `feasibility` dial is worth carrying on most domains: it's an ordinary
+**coverage** axis (one elite per bin, so a far-fetched idea can't evict a buildable one
+and vice versa), *not* a quality score — omit it only when another axis already does that
+job, as `testability` does in `research_hypotheses.yaml`.
 
 Then a user who says "name ideas (naming)" gets these axes; everyone else gets
 inferred-or-generic axes. See `references/axis_inference.md` for how inference
@@ -285,9 +292,9 @@ python -m cambrian_engine <command> --project <id> [--axes axes.json] [--seed N]
 | `recall` | return preference memory for in-context injection |
 | `ingest` | embed → dedup → place → novelty → archive → DPP → monitor |
 | `remember` | append a comparison/pin/discard to preference memory |
-| `parents` | diverse parents for the next generation (pins always kept, discards excluded) |
+| `parents` | diverse parents for the next generation (pins always kept, discards excluded; pins whose idea an axes change cleared come back under `stale_pins`) |
 | `metrics` | archive health (entropy, mean cosine, coverage, n) + mechanism spread + open-axis freeze progress |
-| `selftest` | full loop with a stubbed LLM + human; variety gate + collapse reversal |
+| `selftest` | full loop with a stubbed LLM + human; variety gate + collapse reversal + advisory originality probe |
 
 Runtime state is written **outside** the plugin (so reinstalls don't wipe it):
 `~/.cambrian/<project>/...`, preferences namespaced per domain.

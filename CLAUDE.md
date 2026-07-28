@@ -157,7 +157,7 @@ reads/writes JSON, prints JSON to stdout, errors to stderr with a non-zero exit.
 | `ingest` | embed → dedup → place → novelty → archive → DPP → monitor (one cycle) |
 | `remember` | append a comparison/pin/discard to preference memory |
 | `parents` | diverse parents for the next generation (pins always kept) |
-| `metrics` | archive health (entropy, mean cosine, coverage, n) + open-axis freeze progress |
+| `metrics` | archive health (entropy, mean cosine, coverage, n) + mechanism spread + open-axis freeze progress + (advisory) gap log |
 | `selftest` | full loop with stubbed LLM + human; variety gate + collapse reversal + advisory originality probe |
 
 ## Architecture

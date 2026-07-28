@@ -59,7 +59,7 @@ One session cycle, described in `loop.md`, chains nine steps:
 
 ```mermaid
 flowchart TD
-    A[1. Resolve session axes<br/>named / inferred+confirmed / generic] --> B[2. Generate candidates<br/>LLM agent · operator bank<br/>mechanism-first · anti-cliché: repel the obvious-set]
+    A[1. Resolve session axes + reach<br/>named / inferred+confirmed / generic] --> B[2. Generate candidates<br/>LLM agent · operator bank<br/>mechanism-first · anti-cliché: repel the obvious-set]
     B --> C[3. Prefilter for validity<br/>LLM agent · skeptical rubric]
     C --> D{{4. INGEST · engine}}
     D --> D1[embed · lineage distinct from the agent]
@@ -78,7 +78,7 @@ flowchart TD
     I --> B
 ```
 
-The split of signals by component is the axis of the design: the **framing** (the axes) is set by the human and configures the whole search; **variation** is produced by the agent with the operator bank, mechanism-first (the approach is chosen before the surface, since the open axis is what the engine niches on); **diversity** is owned by the engine; **validity** is judged by the agent; **value** is owned by the human.
+The split of signals by component is the axis of the design: the **framing** (the axes, plus the *reach* dial that sets how far out to push in degree but never in kind) is set by the human and configures the whole search; **variation** is produced by the agent with the operator bank, mechanism-first (the approach is chosen before the surface, since the open axis is what the engine niches on); **diversity** is owned by the engine; **validity** is judged by the agent; **value** is owned by the human.
 
 ---
 
@@ -122,9 +122,17 @@ The second is the **variety-erosion sensor**. A generator can regress to the mod
 
 ## 5. The human in the loop
 
-A single principle governs all use of the human: **minimize queries while maximizing their information value**. It is realized at four leverage points.
+A single principle governs all use of the human: **minimize queries while maximizing their information value**. It is realized at five leverage points.
 
 **The framing (the axes).** The first and largest leverage point. "Domain-agnostic" does not eliminate the need for descriptor axes; it resolves them per session with a cascade: if the user names a domain with a template, it is loaded; otherwise the agent **infers 4–6 axes** from the brief —marking exactly one as `open`/`primary_novelty`— and **confirms them with a single question**; if it cannot, it falls back to the neutral generic axes. A single decision configures the whole search: cheap in attention, enormous in effect. Nothing about a domain is baked into the plugin.
+
+Among those axes, `feasibility` (far-fetched ↔ buildable) is worth naming because it is the one most easily mistaken for a quality score. It is an ordinary **coverage** axis: one elite per bin, so a far-fetched idea cannot evict a buildable one from its own cell, nor the reverse. Buildability is thus something the archive *spans* rather than something it *optimizes* — the distinction on which the whole quality-diversity framing rests. It is omitted only where another axis already does that job (`testability`, in the research-hypotheses template).
+
+**Reach: divergence in degree, never in kind.** Maximum divergence is not always what the user wants; it produces extravagant, sometimes absurd or cryptic ideas. **Reach** —`conservative` | `balanced` (default) | `wild`— is the tempered middle band between greatest divergence and collapse-to-the-mean, and it is the cheapest control in the system: the same one-line confirm that settles the axes states it, and the user can change it any round.
+
+Its design is worth stating precisely, because it is the one place where the architecture lets a human throttle the search without breaching the diversity invariant. Reach caps divergence in **degree** — it narrows the `boldness` band (`[0, 0.5]` / `[0, 0.75]` / `[0, 1]`), biases the `feasibility` lean, and shifts the operator mix from recombinative toward far-reaching. It **never** caps divergence in **kind**: the `mechanism` axis spreads maximally at every setting, so even a `conservative` slate is built from genuinely different approaches rather than variations on one. Coherence is likewise enforced at every setting — `wild` means further-out, never incoherent.
+
+Crucially, reach is a **language-layer directive with no engine code behind it**. It is applied by the agent when writing descriptors and choosing operators; the engine is unchanged, still only measuring dispersion over whatever it is handed. It is read by neither the DPP kernel, nor novelty, nor niching, nor the monitor. A user asking for safer ideas therefore changes what is *generated*, never how variety is *measured or selected* — which is what keeps a taste preference from quietly becoming a diversity filter.
 
 **Active learning: which pairs to ask.** From the slate, at most two A-vs-B pairs are chosen by their **informativeness**, scored as `0.5·similarity + 0.3·uncertainty + 0.2·novelty`, skipping pairs the user already resolved. That is: it asks about pairs that are **similar** in embedding (a fine distinction the model cannot resolve → maximum judge disagreement), of **uncertain** quality (close fitness), and on the **novel frontier**. Each idea's niche coordinates are shown alongside it, because embedding diversity does not always coincide with the distinctness a human perceives, and it is best to let the human judge.
 
@@ -135,6 +143,8 @@ The two readings need not be mutually exclusive across a session's arc —explor
 **Stepping stones and vetoes.** The user can **pin** any idea as a stepping stone to keep exploring from. Pins are never discarded, not even if there are more pins than the parent quota. This implements the Picbreeder mode: preserving the stepping stones that a purely objective-driven search would raze. The symmetric move is the **discard**: the user may veto any idea they do not want carried forward. A discard is the *negative* of a pin —it removes the idea from the *presented* slate pool and the *parent* pool, so it stops re-appearing and is never bred from— but, being the user pruning rather than a quality or cliché heuristic, it is **never** wired into novelty, the DPP kernel, niching, fitness, or the monitor. That is exactly what lets it honor "the user is the real selector" without breaching the diversity invariant. Pins and discards are **mutually exclusive, latest action wins** (re-pinning an id un-discards it), and both are namespaced per domain alongside the comparisons.
 
 **Preference memory and parents.** Comparisons, pins, and discards are stored in local memory **namespaced per domain**, and the comparisons and pins are summarized for injection into context the following session (win counts, preferred descriptor values). For the next generation, `parents` returns diverse parents by *farthest-point* from the pins, biasing toward fertile but distinct regions (pins always kept, discards always excluded).
+
+That asymmetry between memory and geometry has one consequence worth making explicit: **a pin can outlive the idea it names**. Changing a session's axes resets the geometry-coupled state but deliberately preserves the preference memory, so a surviving pin may reference a candidate whose text is gone. Returning it as an ordinary parent would hand the agent a *contentless stepping stone* to breed from — the one thing a stepping stone cannot be. Such ids therefore come back under a separate `stale_pins` key: the preference is still honored as memory, and only its use as a parent is suppressed.
 
 It is worth naming honestly the limit of this half: the preference memory is **heuristic** —tallies and preferred values— not a calibrated value *proxy* that scores the bulk of candidates. The system amplifies the human's *reach* (via geometry) and records their choices, but it still **does not amplify their value judgment** across many candidates the way a trained proxy would. We return to this under limitations.
 
@@ -153,6 +163,12 @@ Third, the gate now makes one narrow **value** assertion (its first): two candid
 **Advisory surface/mechanism gap probe.** In the same spirit, the self-test reports the diverse slate's surface/mechanism gap and includes a fixture sanity check: a deliberately *mechanism-monotone* slate (one approach, varied wording) must show a **larger** gap than the genuinely diverse slate. Like the originality probe it is reported for visibility, **excluded from the `ok` verdict**, and never wired into selection — measured, never gated.
 
 **Induced-collapse reversal.** A deliberately uniform generation (similar but not duplicated: above the monitor's threshold, below the dedup threshold) must trip the `collapsing` flag; and the next generation, once diversity pressure is raised, must recover. The check first warms the monitor's rolling baseline with two diverse generations, so it exercises the *calibrated relative* rule rather than the absolute fallback.
+
+Two further invariants are enforced by the engine itself and covered by regression tests rather than by the gate — each was found to have silently degraded output, and each test was verified to fail against the pre-fix engine.
+
+**Identity: candidate ids as a primary key.** A guarantee about *variety* is only as good as the identity of the things being varied. A candidate's `id` keys the archive's elite, the candidate store, both vector stores, the pins and discards, and the slate's embedding reference — so it is a primary key in fact, and the engine now enforces it as one. Where it is violated, the failure is exactly the one the system exists to prevent: two candidates sharing an id each win a niche while only the last record survives in the store, so a niche silently comes to name another idea's text, coordinates, and embedding, and **the same idea renders twice on one slate**. Dedup does not catch this, because dedup compares *text*, not ids. Two guards close it — duplicates *within* a submitted batch are rejected, as is an id already stored under different text (the cross-generation and cross-session case, whose realistic trigger is a fresh agent restarting a candidate counter, and the reason the prose contract now mandates generation-prefixed ids). Re-submitting a candidate *verbatim* remains legal: it is a no-op that dedup drops at cosine 1.0.
+
+**Read consistency.** One `ingest` cycle rewrites several files that must be read together — the archive, the candidate store, and the vector stores. The read commands (`metrics`, `parents`, `recall`) therefore snapshot them under a read lock, so a concurrent cycle cannot be observed mid-rewrite as a new archive paired with a stale candidate store. The lock is best-effort by design —it proceeds on timeout rather than deadlocking— and is a no-op when the project directory does not yet exist, so a read command never creates state as a side effect.
 
 To these are added three structural guarantees that are not tests but properties of the design: the **lineage bias** is covered by using an embedding lineage distinct from the agent's; **determinism** is preserved by passing the same seed to niching, DPP, and CVT throughout a session; and the **monitor is never bypassed**. A `selftest` failure is treated as a real regression in the diversity guarantees.
 
@@ -295,7 +311,7 @@ We have described an architecture for the case where the value of an idea is sub
 | `recall` | return the preference memory for in-context injection |
 | `ingest` | embed → dedup → place → novelty → archive → DPP → monitor (one cycle) |
 | `remember` | append a comparison, a pin, or a discard (veto) to the preference memory |
-| `parents` | diverse parents for the next generation (pins always kept, discards always excluded) |
+| `parents` | diverse parents for the next generation (pins always kept, discards always excluded; pins whose idea an axes change cleared are returned separately as `stale_pins`) |
 | `metrics` | archive health (entropy, mean cosine, coverage, n) + open-axis freeze progress + archive mechanism spread + (advisory) gap log |
 | `selftest` | full loop with a stubbed LLM and human; variety gate + collapse reversal + advisory originality probe |
 
