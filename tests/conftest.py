@@ -19,9 +19,15 @@ def _hash_embedder(monkeypatch):
     monkeypatch.setenv("CAMBRIAN_EMBEDDER", "hash")
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def home(tmp_path, monkeypatch) -> Path:
-    """An isolated state home for one test."""
+    """An isolated state home for one test.
+
+    **autouse** so isolation is not opt-in: a test that forgets to request ``home``
+    would otherwise fall through to the real ``~/.cambrian`` and write into the
+    developer's own state. Tests that need the path still just declare ``home`` —
+    fixtures are cached per test, so they get this very directory.
+    """
     h = tmp_path / "state-home"
     h.mkdir()
     monkeypatch.setenv("CAMBRIAN_HOME", str(h))

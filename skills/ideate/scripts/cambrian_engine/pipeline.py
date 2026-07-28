@@ -149,7 +149,11 @@ def paths(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
 def recall(project: str, k: int = 10, home: Optional[Path] = None) -> Dict[str, Any]:
     """Return memory for in-context injection: recent choices, pins, win tallies."""
     sess = Session(project, home=home)
-    return memory.recall(sess.state, sess.domain, k=k)
+    # Reads comparisons + pins + discards + the candidate store together; take the
+    # project lock so a concurrent ingest can't be observed mid-rewrite (see
+    # State.project_read_lock — best-effort, never blocks for long).
+    with sess.state.project_read_lock():
+        return memory.recall(sess.state, sess.domain, k=k)
 
 
 # --------------------------------------------------------------------------- #
@@ -160,7 +164,25 @@ def _parse_candidates(candidates) -> List[Candidate]:
         candidates = candidates.get("candidates", [])
     if not isinstance(candidates, list):
         raise config.ConfigError("candidates must be a list (or {candidates: [...]})")
-    return [Candidate.from_dict(c) for c in candidates]
+    parsed = [Candidate.from_dict(c) for c in candidates]
+    # A candidate id is the PRIMARY KEY of every downstream store: the archive's
+    # ``elite_id``, ``cand_store``, ``stored_emb``, pins/discards, and the slate's
+    # ``embedding_ref``. Two candidates sharing one id therefore both "win" a niche
+    # while only the LAST record survives in cand_store — so one niche silently ends
+    # up pointing at a different idea's text/coords/embedding, and the slate renders
+    # the same item twice. Dedup does not catch it (it compares text, not ids). Reject
+    # loudly instead of degrading the one thing the slate promises.
+    seen: Set[str] = set()
+    dupes: Set[str] = set()
+    for c in parsed:
+        (dupes if c.id in seen else seen).add(c.id)
+    if dupes:
+        raise config.ConfigError(
+            f"duplicate candidate id(s) in this generation: {', '.join(sorted(dupes))}; "
+            f"ids must be unique within a batch (they key the archive, embeddings, "
+            f"and preference memory)"
+        )
+    return parsed
 
 
 def _survivor_novelty(
@@ -488,6 +510,15 @@ def _empty_cycle(
     mon["variety_eroding"] = (
         int(meta.get("erosion_streak", 0)) >= econfig.erosion_persist
     )
+    # Present on every normal cycle, so it must be present here too — this function's
+    # whole contract is that a JSON consumer never KeyErrors on an empty generation.
+    # Slopes are None (no survivor novelty to measure); the streak is the persisted one.
+    mon["variety_erosion"] = {
+        "streak": int(meta.get("erosion_streak", 0)),
+        "slope_earlier": None,
+        "slope_recent": None,
+        "note": "advisory; empty generation — sensor not advanced, last streak reported",
+    }
     in_explore = (
         econfig.explore_until_generation > 0
         and gen_index < econfig.explore_until_generation
@@ -501,12 +532,39 @@ def _empty_cycle(
             "ask_sim_weight_effective": econfig.ask_sim_weight_for_generation(gen_index),
         },
         "monitor": mon,
-        "parents": [],
+        "slate_ids": [],
         "slate_mechanism_novelty": None,
         "open_axis": _open_axis_status(
             state, spec, econfig.open_niches, econfig.open_niche_freeze_factor
         ),
     }
+
+
+def _guard_id_reuse(
+    cand_list: List[Candidate], cand_store: Dict[str, Any], project: str
+) -> None:
+    """Fail loudly when a candidate reuses an id already recorded under DIFFERENT text.
+
+    The batch-local twin of the duplicate-id check in :func:`_parse_candidates`, for the
+    cross-GENERATION case: a later cycle (or a later session — a fresh agent that restarts
+    its ``c-0001`` counter) submitting an old id would overwrite that id's record while the
+    niche it was already elite of keeps pointing at it, so an existing archive entry silently
+    acquires a different idea's text, coords and embedding.
+
+    Re-submitting a candidate VERBATIM is not an error — it is a harmless no-op that dedup
+    drops (identical text embeds to cosine 1.0 > tau) — so only a text change is rejected.
+    """
+    collisions = sorted(
+        c.id for c in cand_list
+        if c.id in cand_store and cand_store[c.id].get("text") != c.text
+    )
+    if collisions:
+        raise config.ConfigError(
+            f"candidate id(s) already used in project {project!r} with different text: "
+            f"{', '.join(collisions)}; ids must be unique for the life of a project "
+            f"(reusing one silently rewrites the archived idea it names) — give new "
+            f"candidates fresh ids, e.g. prefix them with the generation"
+        )
 
 
 def _guard_embedding_dim(
@@ -802,6 +860,7 @@ def _ingest_locked(
     stored_emb: Dict[str, List[float]] = state.read_embeddings()
     stored_mech_emb: Dict[str, List[float]] = state.read_mech_embeddings()
     cand_store: Dict[str, Any] = state.read_candidates()
+    _guard_id_reuse(cand_list, cand_store, project)
 
     embedder = sess.embedder
     vecs = embedder.embed([c.text for c in cand_list])
@@ -1023,7 +1082,12 @@ def _ingest_locked(
         "ask_pairs": ask_pairs,
         "ask_policy": ask_policy,
         "monitor": mon,
-        "parents": slate_ids,
+        # The ids of the slate items, NOT breeding parents — it honors neither pins nor
+        # discards. Named ``parents`` until 0.6.1, which invited exactly the misread that
+        # skips both of the user's levers; the ``parents`` COMMAND is the only source of
+        # parents. Kept as a distinct field because the agent needs the id list to build
+        # its remember/pin/discard events.
+        "slate_ids": slate_ids,
         "slate_mechanism_novelty": (
             round(sum(_mvals) / len(_mvals), 4) if _mvals else None
         ),
@@ -1042,12 +1106,17 @@ def _ingest_locked(
 def metrics(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
     """Current archive health: entropy, mean cosine, coverage, n."""
     sess = Session(project, home=home)
-    arc = archive_mod.Archive.from_dict(sess.spec, sess.state.read_archive())
-    stored_emb = sess.state.read_embeddings()
+    # The archive, embeddings, mechanism embeddings and meta are rewritten together by
+    # ingest, so snapshot them all under the project lock; everything below is pure
+    # computation over that snapshot (see State.project_read_lock — best-effort).
+    with sess.state.project_read_lock():
+        arc = archive_mod.Archive.from_dict(sess.spec, sess.state.read_archive())
+        stored_emb = sess.state.read_embeddings()
+        stored_mech_emb = sess.state.read_mech_embeddings()
+        meta = sess.state.read_meta()
     elite_ids = [i for i in arc.elite_ids() if i in stored_emb]
     # Engine knobs from the persisted meta (fall back to the module defaults for older
     # projects whose meta predates the engine block).
-    meta = sess.state.read_meta()
     eng = meta.get("engine") or {}
     open_niches = int(eng.get("open_niches", OPEN_NICHES))
     freeze_factor = int(eng.get("open_niche_freeze_factor", OPEN_NICHE_FREEZE_FACTOR))
@@ -1069,7 +1138,7 @@ def metrics(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
     # elites' mechanism (open-axis) embeddings. This is ARCHIVE-scoped and distinct
     # from the slate-scoped `mechanism_spread` inside `surface_mechanism_gap` (gap.py).
     # Measurement only — never feeds selection, the monitor, or any gate.
-    stored_mech_emb = sess.state.read_mech_embeddings()
+    # (``stored_mech_emb`` was snapshotted under the lock above, with the rest.)
     # Same cap discipline as the surface snapshot above: this pass ran the O(N²·d) pairwise matrix
     # over ALL elites' mechanism vectors while the surface pass was already capped, with the comment
     # explaining why. At/below the cap the id set — and so the advisory number — is unchanged; above
@@ -1124,20 +1193,35 @@ def parents(project: str, k: int = 4, seed: int = 0,
     distance to this session's own elites + batch), NOT originality vs. prior art.
     """
     sess = Session(project, home=home, seed=seed)
-    arc = archive_mod.Archive.from_dict(sess.spec, sess.state.read_archive())
-    stored_emb = sess.state.read_embeddings()
-    cand_store = sess.state.read_candidates()
-    # Session.domain is the shared snapshot-resolved namespace, so pins are read
-    # from the namespace recall/ingest/remember wrote them to.
-    pins = sess.state.read_pins(sess.domain)
-    discards = sess.state.read_discards(sess.domain)
+    # Snapshot every file this reads under the project lock: the archive names elites
+    # whose records live in the candidate store, so an unlocked read could catch a
+    # concurrent ingest between the two writes (see State.project_read_lock).
+    with sess.state.project_read_lock():
+        arc = archive_mod.Archive.from_dict(sess.spec, sess.state.read_archive())
+        stored_emb = sess.state.read_embeddings()
+        cand_store = sess.state.read_candidates()
+        # Session.domain is the shared snapshot-resolved namespace, so pins are read
+        # from the namespace recall/ingest/remember wrote them to.
+        pins = sess.state.read_pins(sess.domain)
+        discards = sess.state.read_discards(sess.domain)
     elite_ids = [
         i for i in arc.elite_ids() if i in stored_emb and i not in set(discards)
     ]
     chosen = memory.select_parents(elite_ids, stored_emb, pins, k, discards=discards)
     records = []
+    stale: List[str] = []
     for cid in chosen:
-        rec = cand_store.get(cid, {})
+        rec = cand_store.get(cid)
+        if rec is None:
+            # A pin whose candidate record is gone — ``init-project`` resets the
+            # geometry (archive/candidates/embeddings) on an axes change but
+            # deliberately PRESERVES preference memory, so a pin can outlive the idea
+            # it names. Emitting it as a parent with an empty ``text`` hands the agent
+            # a contentless stepping stone to breed from (loop.md §6). Report it
+            # separately instead, so the caller can drop it rather than generate from
+            # nothing. Non-pinned ids can't reach here: they come from ``elite_ids``.
+            stale.append(cid)
+            continue
         records.append(
             {
                 "id": cid,
@@ -1148,4 +1232,12 @@ def parents(project: str, k: int = 4, seed: int = 0,
                 "pinned": cid in pins,
             }
         )
-    return {"parents": records}
+    out: Dict[str, Any] = {"parents": records}
+    if stale:
+        out["stale_pins"] = stale
+        out["stale_pins_note"] = (
+            f"{len(stale)} pinned id(s) have no candidate record in this project "
+            f"(the axes changed and init-project reset the geometry); they are kept "
+            f"in memory but cannot be used as parents"
+        )
+    return out

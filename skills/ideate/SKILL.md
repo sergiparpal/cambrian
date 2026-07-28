@@ -91,6 +91,12 @@ Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
    operators; for each candidate report its `descriptor` on the resolved axes and
    its `genealogy` (parent ids + operator id). Push for variety — each new
    approach must differ from the ones already shown.
+   - **Give every candidate an `id` that is unique for the life of the PROJECT** —
+     across generations *and* across sessions resuming the same project, not just
+     within one batch. The id keys the archive, the embeddings, and preference
+     memory, so a reused one would rewrite the archived idea it names. Prefix ids
+     with the generation (`g0-1`, `g1-1`, …). The engine rejects a collision with a
+     clear error; renumber and re-ingest if you hit one.
    - **Before generating, map the clichés (anti-cliché directive).** Enumerate the
      **~6 most obvious / cliché answers** to *this* brief — the responses anyone
      would reach for first. Split them in half: **O_train** (first ~3 — keep these
@@ -168,7 +174,10 @@ Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
    (`{"type":"pin","id":…}`, `{"type":"discard","id":…}`, or
    `{"type":"comparison","winner":…,"loser":…}`); then `ENGINE parents` to get diverse
    parents (pins always kept, discards always excluded) and loop from step 4, or stop
-   on the user's command.
+   on the user's command. Use the `parents` **command** for this — `ingest`'s
+   `slate_ids` is only the slate's id list and honors neither pins nor discards. Ids
+   returned under `stale_pins` are pins whose idea was cleared by an axes change:
+   never breed from them.
 9. **React to the monitor.** If `monitor.collapsing` is true, raise diversity
    directives next round (new operators, forbid the crowded niches, demand
    distance from recent ideas) — never remove or bypass the monitor. If

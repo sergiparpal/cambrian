@@ -145,15 +145,22 @@ Use `operators.md`. Produce `candidates_per_generation` ideas by applying
 
 ```json
 {
-  "id": "c-0007",
+  "id": "g3-07",
   "text": "Idea: <the concept, concretely>",
   "descriptor": {"audience": "...", "register": "...", "format": "...",
                  "edginess": 0.7, "mechanism": "<the core how, in a few words>"},
-  "genealogy": {"parent_ids": ["c-0001"], "operator_id": "analogy"}
+  "genealogy": {"parent_ids": ["g2-04"], "operator_id": "analogy"}
 }
 ```
 
 Rules:
+- **`id` must be unique for the life of the PROJECT** — not just within one batch, and
+  including across sessions that resume the same `PROJECT`. The id is the primary key of
+  the archive, the embedding store, and preference memory, so reusing one would rewrite
+  the archived idea it names. **Prefix every id with the generation** (`g0-1`, `g1-1`, …)
+  or use the cycle count from `ENGINE metrics`, so a later session restarting a counter
+  can't collide. The engine rejects a collision with a clear error rather than corrupting
+  the archive — if you hit one, renumber and re-ingest.
 - Generation is **mechanism-first**: pick a distinct `mechanism` (the open/primary
   axis "how") for each idea, then realize each as a surface `text` — surface variety
   follows mechanism variety, never the reverse. This composes with the
@@ -207,7 +214,7 @@ Returns:
               "normalized_entropy": 0.88, "coverage": 9, "n": 12, "reasons": [],
               "submitted": 12, "target_candidates": 12, "under_generation": false,
               "variety_eroding": false, "variety_erosion": {"streak": 0, "...": "..."}},
-  "parents": ["id", "..."],
+  "slate_ids": ["id", "..."],
   "slate_mechanism_novelty": 0.57,
   "open_axis": {"present": true, "frozen": false, "partition": "cold_start",
                 "accumulated": 12, "freeze_threshold": 48, "progress": 0.25},
@@ -223,6 +230,11 @@ resolved axes (default off ⇒ absent). It is advisory measurement — see §8.
 (the slate's mean mechanism-space novelty, paired with each item's `mechanism_novelty`) are
 **advisory/observability only** — no action required. `monitor.variety_eroding` *is*
 actionable; see §7.
+
+`slate_ids` is just the id list of the items in `slate` — convenient for building your
+`remember` events. It is **not** a parent list: it honors neither pins nor discards. The
+`parents` **command** (§6) is the only source of parents. (This field was called `parents`
+before 0.6.1, which invited exactly that misread.)
 
 `submitted` / `target_candidates` / `under_generation` are the **prefilter guard**:
 the engine sees only the candidates you submitted, so if you prefiltered away so many
@@ -313,6 +325,12 @@ are always excluded):
 ```
 ENGINE parents --project PROJECT --k 4 --seed 7
 ```
+
+If the axes changed mid-project, `init-project` reset the geometry but kept preference
+memory, so a pin can outlive the idea it named. Those ids come back under a separate
+`stale_pins` key (with a `stale_pins_note`) instead of as empty-text parents — **never
+try to breed from a `stale_pins` id**; mention it to the user if it matters, or just
+carry on with the real `parents`.
 
 Loop back to step 2 with those parents, or stop when the user is satisfied. At any
 time, `ENGINE metrics --project PROJECT` reports `{entropy, mean_cosine,

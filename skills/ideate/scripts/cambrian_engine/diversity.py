@@ -73,6 +73,11 @@ def greedy_map_dpp(kernel: np.ndarray, k: int, epsilon: float = 1e-10) -> List[i
     cis = np.zeros((k, n))
     di2s = np.diag(kernel).astype(np.float64).copy()
     selected: List[int] = []
+    # The first pick is unconditional, unlike every later one (which must clear
+    # ``epsilon``): it is the max-diagonal item, and a MAP set of size k >= 1 always
+    # contains it — there is no "marginal" gain to threshold on an empty selection.
+    # Applying the epsilon here would return an EMPTY slate for a degenerate pool
+    # instead of the single best item, which is strictly worse for the caller.
     j = int(np.argmax(di2s))
     selected.append(j)
     while len(selected) < k:
@@ -196,10 +201,18 @@ def select_diverse(
     n = vecs.shape[0]
     if n == 0:
         return []
-    if k >= n:
-        return list(range(n))
     if quality is not None:
         quality = bounded_quality(quality, quality_weight)
+    if k >= n:
+        # Everything is selected, so there is nothing for the DPP to choose — but the
+        # ORDER still reaches the user as the slate order. Returning raw index order
+        # made that arbitrary (archive dict order). Rank by the bounded quality instead,
+        # which is exactly the "nudge the ordering, never prune variety" allowance the
+        # judge already has in the kernel. Uniform quality -> all ones -> stable
+        # ``range(n)``, so the no-quality and equal-fitness paths are unchanged.
+        if quality is None:
+            return list(range(n))
+        return sorted(range(n), key=lambda i: (-float(quality[i]), i))
     try:
         # Tie the early-stop threshold to the kernel jitter. Marginal gains floor at
         # ~jitter for a rank-deficient pool, so an absolute epsilon below the jitter

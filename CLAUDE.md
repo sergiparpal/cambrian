@@ -41,6 +41,15 @@ and any change must preserve it:
   the monitor. Because it is the user pruning (not a quality/cliché heuristic), it preserves the
   invariant while honoring "the user is the real selector". Pins and discards are **mutually
   exclusive, latest action wins** (`add_pin`/`add_discard` keep one set free of the other).
+  Because each of those writes **both** files, they share **one** lock (`State._preference_lock`,
+  always taken on the pins path so the pair can never be grabbed in opposite orders). Guarding
+  only the file a call was "about" left the other written unlocked, so two concurrent `remember`
+  calls took *different* locks and nothing serialized them — reproducibly landing an id in both
+  lists (`tests/test_preference_lock.py`).
+  A pin can also **outlive the idea it names**: `init-project` resets the geometry on an axes
+  change but deliberately preserves preference memory. `parents` therefore returns such ids
+  under a separate **`stale_pins`** key rather than as parents with an empty `text` — a
+  contentless stepping stone the agent is told (`loop.md` §6) to breed from.
 - The embedder is deliberately a **different model family** from Claude (default
   `minishlab/potion-multilingual-128M`; opt-in high-fidelity `BAAI/bge-small-en-v1.5`) so
   "what's novel" isn't judged by the lineage that generated the ideas.
@@ -218,6 +227,25 @@ monitor (a "boiling-frog" failure). While still bootstrapping (no calibrated bas
 generation is admitted, so the window can form even under an embedder whose natural cosine scale
 trips the absolute fallback.
 
+**Candidate ids are a primary key, and the engine enforces it.** A candidate `id` keys the
+archive's `elite_id`, `candidates.json`, both vector stores, pins/discards, and the slate's
+`embedding_ref`. Two candidates sharing one id each win a niche while only the *last* record
+survives in `cand_store`, so a niche silently ends up naming another idea's text/coords/embedding
+and **the same idea renders twice on one slate** — the precise failure the whole tool exists to
+prevent. Dedup does not catch this (it compares *text*, not ids). Two guards close it, both
+raising a clean `ConfigError`: `_parse_candidates` rejects duplicates **within a batch**, and
+`_guard_id_reuse` rejects an id **already in `cand_store` under different text** (cross-generation
+and cross-session — a fresh agent restarting a `c-0001` counter is the realistic trigger, which is
+why `SKILL.md`/`loop.md` now mandate generation-prefixed ids). Re-submitting a candidate *verbatim*
+stays legal: it is a no-op dedup drops at cosine 1.0.
+
+**Reads are locked too.** `metrics` / `parents` / `recall` each read several files that `ingest`
+rewrites *together*, so they snapshot them under `State.project_read_lock()` — the same best-effort
+lock as `project_lock` (proceeds on timeout, never deadlocks), but a **no-op when the project dir
+doesn't exist**, so a read-only command still never creates state as a side effect. Without it a
+reader could mix a new `archive.json` with an old `candidates.json` and see an elite whose record
+isn't there yet.
+
 **Prefilter guard** (the load-bearing invariant, mechanically sensed): the monitor covers the
 *generation* stage (it runs on raw submitted vectors), but the agent's **prefilter** — dropping
 candidates as "off-brief" — is the one stage the engine never sees, so an agent could cut variety
@@ -350,6 +378,27 @@ cycle (the advisory `mech_embeddings.npz` only when the cycle actually changed i
 for long sessions `ingest` **prunes** records nothing reads again once the store exceeds
 `engine.state_prune_threshold` (default 2000, 0 disables) — keeping exactly archive elites, pins, and
 comparison ids, so the pruning is output-neutral.
+
+Two **scale caveats** on that pruning, both measured, neither a defect — know them before
+relying on it to bound a long project:
+
+- **It reclaims least when the engine works best.** The keep set is every archive elite, and
+  every niche has one, so pruning only ever frees *non-elite* candidates. In a session whose
+  descriptors are genuinely well-spread (the goal), nearly every survivor is the elite of its
+  own niche — a 60-generation × 12 run measured **99.3%** of stored records as elites, i.e.
+  effectively nothing to prune. Pruning bounds a session that *reuses* descriptor values, not
+  one that covers the space.
+- **`archive.json` itself is never pruned or capped.** `novelty_ref_cap` / `max_dpp_pool` bound
+  the per-cycle *math*, not the archive's size or its whole-file rewrite. With free-text
+  categorical descriptors the niche space is effectively unbounded, so a very long-lived project
+  accretes niches indefinitely (135 niches / 74 KB after 720 candidates; ~62 ms per cycle, so
+  this is a storage note, not a latency one today). Capping it would mean *evicting elites* —
+  a selection-semantics change, deliberately not made.
+
+Relatedly, `mech_embeddings.npz` is a full parallel copy of the vector store (same ids, same
+width — it exactly **doubles** vector storage) in service of a purely **advisory** measurement
+(S4 `mechanism_novelty` + the archive-scoped `mechanism_spread`). That cost is accepted on
+purpose: making it conditional would make an always-on reported field intermittently `null`.
 
 **The self-test is the correctness contract** (`selftest.py`). It enforces a **variety gate**
 (renamed from "value gate": it proves *variety geometry* plus one narrow within-niche value

@@ -287,8 +287,11 @@ def _value_elite_wins_niche(axes, seed, home, project) -> Dict[str, Any]:
     """The variety gate's first VALUE assertion: higher fitness wins its niche.
 
     Two candidates share an identical descriptor (so they map to the **same**
-    niche) but differ only in ``fitness`` (1.2 vs 0.9, both inside the
-    ``[0.7,1.3]`` clip) and in ``text`` (so neither is deduped away). The engine
+    niche) but differ only in ``fitness`` (0.9 vs 0.6 — both inside the judge's
+    contractual ``[0, 1]`` range, see ``judge_rubric.md``) and in ``text`` (so
+    neither is deduped away). NB: ``[0.7, 1.3]`` is the range ``bounded_quality``
+    affine-rescales fitness *into* for the DPP kernel — it is not a valid range for
+    fitness itself, and the elite rule below is scale-free regardless. The engine
     must make the higher-fitness candidate the niche elite and surface it on the
     slate. The **sanity swap** — flipping the two fitness values on a fresh project
     — must flip which id is the elite, proving the check exercises the real fitness
@@ -315,8 +318,8 @@ def _value_elite_wins_niche(axes, seed, home, project) -> Dict[str, Any]:
         elite_id = slate_ids[0] if slate_ids else None  # one niche -> one elite
         return elite_id, slate_ids
 
-    norm_elite, norm_slate = _elite_on_slate(1.2, 0.9, f"{project}-value")
-    swap_elite, _ = _elite_on_slate(0.9, 1.2, f"{project}-value-swap")
+    norm_elite, norm_slate = _elite_on_slate(0.9, 0.6, f"{project}-value")
+    swap_elite, _ = _elite_on_slate(0.6, 0.9, f"{project}-value-swap")
     passed = bool(
         norm_elite == "hi" and "hi" in norm_slate and swap_elite == "lo"
     )

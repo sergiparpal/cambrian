@@ -6,4 +6,4 @@
 # bootstrap.py installs this automatically in editable/dev mode (setup.sh), and CI
 # installs it before running the suite.
 -r requirements.txt
-pytest>=8,<9
+pytest>=8,<10

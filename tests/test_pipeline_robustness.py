@@ -41,15 +41,27 @@ def test_metrics_survives_null_engine_block(home):
 
 def test_empty_cycle_returns_full_schema(home):
     # An empty-candidate generation must return the same response shape as a normal
-    # one, so consumers never KeyError on the advisory keys.
+    # one, so consumers never KeyError on the advisory keys. Compared STRUCTURALLY
+    # against a real cycle rather than a hand-listed key set: the hand-listed version
+    # silently missed monitor["variety_erosion"], which is exactly the drift this
+    # guards. `under_generation_note` is conditional on BOTH paths (present only when
+    # the guard fires), so it is excluded from the parity set.
+    conditional = {"under_generation_note"}
     pipeline.init_project("e", _generic(), seed=0, home=home)
-    res = pipeline.ingest("e", [], _generic(), seed=0, home=home)
-    for key in ("slate", "ask_pairs", "ask_policy", "monitor", "parents", "open_axis"):
-        assert key in res, key
-    assert res["ask_policy"]["phase"] in ("explore", "refine")
-    assert res["monitor"]["under_generation"] is False
-    assert res["monitor"]["variety_eroding"] is False
-    assert res["monitor"]["collapsing"] is False
+    empty = pipeline.ingest("e", [], _generic(), seed=0, home=home)
+
+    pipeline.init_project("e2", _generic(), seed=0, home=home)
+    target = int(State("e2", home=home).read_meta()["candidates_per_generation"])
+    normal = pipeline.ingest(
+        "e2", selftest.diverse_candidates(target), _generic(), seed=0, home=home
+    )
+
+    assert set(empty) == set(normal)
+    assert set(empty["monitor"]) - conditional == set(normal["monitor"]) - conditional
+    assert empty["ask_policy"]["phase"] in ("explore", "refine")
+    assert empty["monitor"]["under_generation"] is False
+    assert empty["monitor"]["variety_eroding"] is False
+    assert empty["monitor"]["collapsing"] is False
 
 
 def test_empty_cycle_reflects_persisted_erosion_streak(home):

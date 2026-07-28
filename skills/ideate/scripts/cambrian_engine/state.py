@@ -354,6 +354,22 @@ class State:
         files as ``<root>/.project.lock``."""
         return _file_lock(self.root / ".project", timeout=timeout)
 
+    def project_read_lock(self, timeout: float = _LOCK_TIMEOUT):
+        """The same lock, taken for a multi-file READ (``metrics`` / ``parents`` / ``recall``).
+
+        Those commands read several files that ``ingest`` rewrites together (archive +
+        candidates + embeddings + meta). Reading unlocked could catch a cycle mid-write and
+        mix a new ``archive.json`` with an old ``candidates.json`` — an elite whose record
+        isn't there yet. Same best-effort semantics as :meth:`project_lock`: on timeout it
+        proceeds anyway, so a reader can never be blocked for long by a writer.
+
+        A no-op when the project dir doesn't exist: there is no cycle to be inconsistent
+        with, and a read-only command must not create state as a side effect (the lock dir
+        would otherwise materialize the project root)."""
+        if not self.root.exists():
+            return contextlib.nullcontext()
+        return _file_lock(self.root / ".project", timeout=timeout)
+
     # -- generic json helpers ---------------------------------------------- #
     def read_json(self, path: Path, default: Any = None) -> Any:
         if not path.exists():
@@ -504,12 +520,27 @@ class State:
     def write_pins(self, domain: str, pins: List[str]) -> None:
         self.write_json(self.pins_path(domain), pins)
 
-    def add_pin(self, domain: str, candidate_id: str) -> List[str]:
-        # Lock the read-modify-write so two concurrent invocations can't each read
-        # the same list and clobber the other's pin (pins are "never dropped").
+    @contextlib.contextmanager
+    def _preference_lock(self, domain: str):
+        """Serialize a read-modify-write that spans BOTH pins and discards.
+
+        ``add_pin`` and ``add_discard`` each touch both files (pinning un-discards and
+        vice versa — they are mutually exclusive, latest action wins). Guarding only the
+        file a call is "about" left the other one written unlocked, so two concurrent
+        ``remember`` calls took DIFFERENT locks and nothing serialized them: an id could
+        end up in both lists (breaking the exclusivity invariant) or a pin could be lost.
+        One lock covering both files closes that. Always taken on the pins path so the
+        two entry points can never grab the pair in opposite orders and deadlock.
+        """
         path = self.pins_path(domain)
         path.parent.mkdir(parents=True, exist_ok=True)
         with _file_lock(path):
+            yield
+
+    def add_pin(self, domain: str, candidate_id: str) -> List[str]:
+        # Lock the read-modify-write so two concurrent invocations can't each read
+        # the same list and clobber the other's pin (pins are "never dropped").
+        with self._preference_lock(domain):
             pins = self.read_pins(domain)
             if candidate_id not in pins:
                 pins.append(candidate_id)
@@ -528,10 +559,9 @@ class State:
     def add_discard(self, domain: str, candidate_id: str) -> List[str]:
         # Locked read-modify-write, mirroring add_pin. A discard is the negative of
         # a pin; the two are mutually exclusive (latest action wins), so discarding
-        # an id also drops it from pins.
-        path = self.discards_path(domain)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with _file_lock(path):
+        # an id also drops it from pins — hence the SHARED lock covering both files
+        # (see _preference_lock), not one lock per file.
+        with self._preference_lock(domain):
             discards = self.read_discards(domain)
             if candidate_id not in discards:
                 discards.append(candidate_id)

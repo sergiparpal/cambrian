@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from .config import ConfigError
 from .state import State
 
 # Default weights for pair informativeness (similar + novel + undecided ==
@@ -41,12 +42,12 @@ W_NOVELTY = 0.2
 def remember(state: State, domain: str, event: Dict[str, Any]) -> Dict[str, Any]:
     """Append a comparison or pin to this domain's memory."""
     if not isinstance(event, dict) or "type" not in event:
-        raise ValueError("event must be an object with a 'type'")
+        raise ConfigError("event must be an object with a 'type'")
     etype = event["type"]
     if etype == "comparison":
         winner, loser = event.get("winner"), event.get("loser")
         if not winner or not loser:
-            raise ValueError("comparison event needs 'winner' and 'loser'")
+            raise ConfigError("comparison event needs 'winner' and 'loser'")
         state.append_comparison(
             domain,
             {
@@ -60,18 +61,18 @@ def remember(state: State, domain: str, event: Dict[str, Any]) -> Dict[str, Any]
     if etype == "pin":
         cid = event.get("id")
         if not cid:
-            raise ValueError("pin event needs an 'id'")
+            raise ConfigError("pin event needs an 'id'")
         pins = state.add_pin(domain, cid)
         return {"ok": True, "type": "pin", "id": cid, "pins": pins}
     if etype == "discard":
         cid = event.get("id")
         if not cid:
-            raise ValueError("discard event needs an 'id'")
+            raise ConfigError("discard event needs an 'id'")
         # A discard is the user's negative lever — the symmetric opposite of a pin.
         # It removes the idea from future slates and parents (and un-pins it).
         discards = state.add_discard(domain, cid)
         return {"ok": True, "type": "discard", "id": cid, "discards": discards}
-    raise ValueError(
+    raise ConfigError(
         f"unknown event type {etype!r} (expected comparison|pin|discard)"
     )
 
