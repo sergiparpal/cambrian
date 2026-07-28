@@ -113,7 +113,11 @@ step looks like and what you do.
    across (for names, say: tone, imagery, length, and how the name is built). It asks
    **one** short question to confirm them. Just reply "ok", or tweak in plain words —
    "make it edgier", "drop the length one". *(If you named a known domain it skips
-   straight ahead.)*
+   straight ahead.)* That same line states the **reach** — how far out the ideas go.
+   It runs at *balanced* by default; say **"wild"** for further-out ideas or
+   **"conservative"** for safer ones, at any point in the session. Reach changes how
+   *bold* the ideas are, never how *varied* they are — every slate is still built from
+   genuinely different approaches.
 3. **Claude shows you a varied slate.** Claude drafts a batch of ideas, quietly drops
    any that are off-brief or don't make sense, and the engine picks a few that are as
    *different from one another* as possible — not just the "best" ones. Each idea comes
@@ -174,7 +178,7 @@ torch-free (~120 MB), downloaded once on first use. Select a different provider 
 the `CAMBRIAN_EMBEDDER` environment variable before launching Claude Code:
 
 ```bash
-export CAMBRIAN_EMBEDDER=local   # static | local | hash | api
+export CAMBRIAN_EMBEDDER=local   # static | local | hash
 ```
 
 - **`static`** (default) — `potion-multilingual-128M`, 256-dim, 101 languages,
@@ -184,9 +188,9 @@ export CAMBRIAN_EMBEDDER=local   # static | local | hash | api
   `pip install -r skills/ideate/scripts/requirements-local.txt`.
 - **`hash`** — deterministic, dependency-light char-n-gram embedder used by the tests
   and the offline self-test (no model download).
-- **`api`** — an **extension point** for a hosted provider (Voyage/OpenAI/Cohere). It
-  is a stub: constructing it is cheap, but embedding raises until you wire a backend
-  into `embed.py`.
+
+(`api` is a **reserved name** for a future hosted provider. There is no backend behind it,
+so selecting it fails immediately with a clear error rather than at first use.)
 
 > **Switching the default is breaking for existing projects.** `static` is 256-dim and
 > `local` is 384-dim; the engine refuses to mix embedding widths within one project. A

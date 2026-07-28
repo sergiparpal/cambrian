@@ -52,6 +52,15 @@ and any change must preserve it:
   of selection is precisely what stops a cliché signal from pruning variety.
 - The **anti-collapse monitor is never bypassed** — when it flags convergence the skill raises
   diversity pressure next round; it is never removed or worked around.
+- **Reach is a language-layer directive, never an engine input.** The `conservative` / `balanced`
+  (default) / `wild` dial in `SKILL.md` caps divergence in **degree** (the `boldness` band) and
+  biases the operator mix and `feasibility` lean; it **never** caps divergence in **kind** — the
+  `mechanism` (open) axis always spreads maximally. It exists purely in the prose contract: the
+  agent applies it when writing descriptors and picking operators, and there is **zero** engine
+  code behind it. Do not mistake it for a quality or selection signal — it is not read by the DPP
+  `q`/kernel, novelty, niching, or the monitor, all of which still only measure dispersion over
+  whatever the agent submits. The companion `feasibility` axis is an ordinary **coverage** axis
+  (one elite per bin), not a fitness term.
 
 **What "the engine owns novelty" precisely means (and what it doesn't).** Niche *placement* on
 **every** axis is driven by the agent's `descriptor` text by design — a categorical mislabel or a
@@ -155,7 +164,12 @@ reads/writes JSON, prints JSON to stdout, errors to stderr with a non-zero exit.
   **unknown key** in that block is a loud `ConfigError` (the valid set is exactly what
   `EngineConfig.to_dict` emits), so a typo'd knob can never silently run on defaults. The
   pipeline/monitor module constants remain only as fallback defaults for direct callers and the
-  self-test (kept in sync with `EngineConfig` by `test_engine_config`). `Candidate.from_dict`
+  self-test. The **pipeline** ones are now *derived* from a default `EngineConfig` (`_DEFAULTS`)
+  rather than hand-mirrored literals, so `test_engine_config` is a **structural** guard for those
+  (the names must exist and stay aligned) and still a genuine value-drift guard for the
+  monitor/memory constants. `config.require_sklearn` gives the two sklearn-dependent call sites
+  (`embed.HashingEmbedder`, `archive.CVTNicher.fit`) one actionable `ConfigError` instead of a raw
+  `ModuleNotFoundError`. `Candidate.from_dict`
   also **rejects empty/whitespace `text`** (it would embed to a zero vector that never dedups and
   always scores maximally novel — poisoning dedup and novelty), mirroring the empty-id guard.
 - `embed.py`, `novelty.py`, `diversity.py`, `monitor.py`, `archive.py` — the math (see below).
@@ -190,6 +204,10 @@ reads/writes JSON, prints JSON to stdout, errors to stderr with a non-zero exit.
 keep one elite per niche → DPP diverse slate → anti-collapse monitor`.
 Subtlety worth preserving: the **monitor runs on the RAW pre-dedup generation vectors**, so a
 near-duplicate batch still registers as collapsing instead of being hidden behind survivors.
+`ingest` also **warm-loads the embedder before taking the project lock** (`sess.embedder.embed([])`):
+the first-ever load can download ~120 MB, and the lock's staleness window (`_LOCK_STALE`, 60s) has no
+heartbeat — a slow download *inside* the lock would let a concurrent session judge it abandoned,
+steal it, and interleave the very read-modify-write the lock serializes.
 Two thresholds that used to be fixed constants are now **calibrated**: the dedup τ is per-embedder
 (`embed.default_dedup_tau`), and the monitor's similarity flag is relative to a rolling window of
 recent generations' mean cosine (`baseline + margin`, with an absolute safety ceiling), falling back
@@ -248,7 +266,7 @@ observable, the engine also reports **novelty in mechanism space** (S4): `mechan
 per slate item (k-NN distance of an idea's mechanism embedding to the session's accumulated
 mechanisms — the *same* k-NN kernel as the surface `novelty`, run on the open-axis embedding),
 `slate_mechanism_novelty` on the `ingest` result, and `mechanism_spread` / `mechanism_n` in
-`metrics`, all backed by a parallel `mech_embeddings.json` store (filled from `open_vecs`, the
+`metrics`, all backed by a parallel `mech_embeddings.npz` store (filled from `open_vecs`, the
 same L2-normalized embedder). S4 is **advisory measurement only** — like `novelty`,
 `originality.py`, and the gap probe it is **measured, never selected on**: never in dedup, the
 DPP `q`/kernel, parents, the fitness clip, the monitor, or `selftest`'s `ok`; the slate is still
@@ -261,7 +279,13 @@ up; a persistent low `mechanism_spread` with high surface diversity is the resid
 
 **Niching** (`archive.py`): a niche key combines one bucket per axis — `categorical` → the value,
 `continuous` → bin index over its range, `open` → a **frozen Voronoi cell** over the *embedding* of
-the axis value (`CVTNicher`). The open-axis partition is **data-adaptive (fit-once-then-freeze)**:
+the axis value (`CVTNicher`). Two bucketing rules are load-bearing and easy to get wrong: a
+categorical value whose slug comes out **empty** (any non-Latin label — the case the multilingual
+default embedder exists to serve) is bucketed by a stable sha1 of the raw value rather than a shared
+literal, so `芸術` and `成長` no longer collapse into one niche and void the coverage axes; and a
+**missing** continuous value bins to the neutral **mid**-bin, never bin 0, since bin 0 is a real
+extreme and defaulting there both biases every omitting descriptor toward it and collapses them all
+into one bin. (A non-finite value is a *bad* value, not an omitted one, and still clamps to bin 0.) The open-axis partition is **data-adaptive (fit-once-then-freeze)**:
 early cycles use deterministic cold-start centroids seeded by `--seed`; once `OPEN_NICHE_FREEZE_FACTOR
 * OPEN_NICHES` (now **2 × 24 = 48**, ~4–5 generations — lowered from 4× so the data-adaptive partition
 actually activates in a realistic session) mechanism embeddings have accumulated, k-means is fit
@@ -281,7 +305,7 @@ to make the otherwise-silent freeze observable.
 - `local` — sentence-transformers `BAAI/bge-small-en-v1.5`, **384-dim, English-only**, CPU, pulls
   the ~2 GB torch stack (opt-in via `requirements-local.txt`); the high-fidelity escape hatch.
 - `hash` — deterministic char-n-gram `HashingVectorizer`, no downloads (tests + offline selftest).
-- `api` — a stub; constructing it is cheap, embedding raises until a backend is wired in `embed.py`.
+- `api` — a reserved name with no wired backend; selecting it raises a clean `ConfigError`.
 
 Switching the default from `local` (384-dim) to `static` (256-dim) is **breaking for projects
 persisted under the old default**: `_guard_embedding_dim` refuses to mix widths, so an old project
@@ -307,7 +331,7 @@ about a domain is baked into the plugin or engine.
 `~/.cambrian/<project>/` (override the base with `CAMBRIAN_HOME`). Writes
 are atomic (temp file + `os.replace`). Per-project files are `meta.json` (project/session
 settings), `axes.json` (the resolved axes geometry — kept separate from settings so the engine's
-`AxesSpec` stays pure), `archive.json`, `candidates.json`, `embeddings.json`, `mech_embeddings.json`
+`AxesSpec` stays pure), `archive.json`, `candidates.json`, `embeddings.npz`, `mech_embeddings.npz`
 (the parallel mechanism/open-axis embedding store backing S4 — see Mechanism-space novelty), and
 `open_nicher.json`
 (the frozen CVT centroids, written once the open-axis partition freezes — see Niching). Preference memory
@@ -316,8 +340,14 @@ settings), `axes.json` (the resolved axes geometry — kept separate from settin
 user's veto list (excluded from slates + parents, mutually exclusive with `pins.json`). A per-project `tmp/` scratch dir (created by
 `State.ensure`, surfaced by the `paths` command) holds the skill's hand-off files (`axes.json`,
 `candidates.json`, `event.json`) inside the state home so they never clutter the user's cwd or
-collide across concurrent sessions. `candidates.json`/`embeddings.json` are rewritten whole each
-cycle; for long sessions `ingest` **prunes** records nothing reads again once the store exceeds
+collide across concurrent sessions. The two **vector** stores are binary `.npz` (float64, so the
+round-trip is exact); a project written by an older engine still loads via a tolerant fallback read
+of the legacy `embeddings.json` / `mech_embeddings.json`, which the next write migrates and removes
+(`reset_geometry` unlinks both shapes so leftovers can't shadow a fresh geometry). The machine-only
+JSON stores (`candidates.json`, `open_nicher.json`) are written **compact** — same values and key
+order, fewer bytes. `candidates.json`/`embeddings.npz` are rewritten whole each
+cycle (the advisory `mech_embeddings.npz` only when the cycle actually changed it);
+for long sessions `ingest` **prunes** records nothing reads again once the store exceeds
 `engine.state_prune_threshold` (default 2000, 0 disables) — keeping exactly archive elites, pins, and
 comparison ids, so the pruning is output-neutral.
 
