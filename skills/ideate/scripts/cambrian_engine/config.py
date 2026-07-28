@@ -36,6 +36,23 @@ class ConfigError(ValueError):
     """Raised when an axes spec is malformed. Message is user-facing."""
 
 
+def require_sklearn(what: str) -> None:
+    """Raise an actionable ``ConfigError`` when scikit-learn — the peer hard-dep behind the ``hash``
+    embedder's ``HashingVectorizer`` and the open-axis nicher's ``KMeans`` — is absent, instead of
+    leaking a raw ``ModuleNotFoundError``. ONE home for the message so the two call sites
+    (``embed.HashingEmbedder``, ``archive.CVTNicher.fit``) can't drift. The caller imports the
+    specific submodule after this returns. Deliberately does NOT suggest ``CAMBRIAN_EMBEDDER=hash``:
+    the hash embedder itself needs sklearn, so re-provisioning is the only real remedy."""
+    try:
+        import sklearn  # noqa: F401 — presence probe; the caller imports the submodule next
+    except ImportError as exc:
+        raise ConfigError(
+            f"Cambrian {what} unavailable: the 'scikit-learn' package is not installed in the "
+            f"engine venv. Re-run provisioning (the SessionStart hook, or "
+            f"`python skills/ideate/scripts/bootstrap.py`)."
+        ) from exc
+
+
 def debug_enabled() -> bool:
     """Whether ``CAMBRIAN_DEBUG`` requests full tracebacks instead of clean errors.
 
@@ -498,11 +515,8 @@ class Niche:
 # Axes loading & validation
 # --------------------------------------------------------------------------- #
 def _coerce_range(value: Any, axis_name: str) -> Tuple[float, float]:
-    if (
-        not isinstance(value, (list, tuple))
-        or len(value) != 2
-        or isinstance(value, str)
-    ):
+    # A ``str`` already fails the (list, tuple) check, so no separate str branch is needed.
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ConfigError(
             f"axis {axis_name!r}: 'range' must be a [lo, hi] pair"
         )

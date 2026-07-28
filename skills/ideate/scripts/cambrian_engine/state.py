@@ -102,6 +102,32 @@ def _fsync_dir(directory: Path) -> None:
         os.close(dfd)
 
 
+_REPLACE_TIMEOUT = 5.0     # seconds — a DEADLINE, not an attempt count
+_REPLACE_BACKOFF = 0.05    # initial sleep; doubles per attempt, capped below
+_REPLACE_BACKOFF_MAX = 0.25
+
+
+def _replace_with_retry(tmp: str, path: Path) -> None:
+    """``os.replace(tmp, path)`` with a bounded retry for the Windows sharing-violation case.
+
+    On Windows, replacing a destination another process holds open WITHOUT ``FILE_SHARE_DELETE``
+    raises ``PermissionError`` (ERROR_SHARING_VIOLATION) — e.g. a concurrent session reading the
+    archive, or the AV/search indexer briefly opening the freshly-renamed file. Retrying to a
+    ~5s DEADLINE keeps a momentary concurrent open from failing an otherwise-valid state write.
+    A no-op on POSIX, where ``os.replace`` over an open file succeeds."""
+    deadline = time.monotonic() + _REPLACE_TIMEOUT
+    backoff = _REPLACE_BACKOFF
+    while True:
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(min(backoff, _REPLACE_BACKOFF_MAX))
+            backoff *= 2
+
+
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
@@ -112,7 +138,12 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             # data (which would leave a zero-length/stale file).
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        # Preserve the destination's existing permission bits across the inode-replacing rename.
+        try:
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        except OSError:
+            pass
+        _replace_with_retry(tmp, path)
         # Fsync the directory so the rename itself is durable, not just the data.
         _fsync_dir(path.parent)
     finally:

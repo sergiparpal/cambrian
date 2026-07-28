@@ -115,6 +115,9 @@ class CVTNicher:
         """
         import warnings
 
+        from .config import require_sklearn
+        require_sklearn("open-axis nicher")  # actionable ConfigError, not a raw ModuleNotFoundError
+
         from sklearn.cluster import KMeans
         from sklearn.exceptions import ConvergenceWarning
 

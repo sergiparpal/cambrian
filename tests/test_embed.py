@@ -101,7 +101,6 @@ def test_provider_switch_loads_without_import_errors():
     # first use, so constructing them here must not import model2vec/torch.
     assert get_embedder("static").name == "static"
     assert get_embedder("hash").name == "hash"
-    assert get_embedder("api").name == "api"
     assert get_embedder("local").name == "local"
     reset_cache()
 

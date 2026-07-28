@@ -85,24 +85,25 @@ def recall(state: State, domain: str, k: int = 10) -> Dict[str, Any]:
     pins = state.read_pins(domain)
     discards = state.read_discards(domain)
 
+    cand_store = state.read_candidates()
     wins: Counter = Counter()
     losses: Counter = Counter()
+    value_wins: Counter = Counter()  # preferred descriptor values, learned from winners
+    # ONE pass under ONE type guard: a second, guard-less loop used to tally value_wins, so a
+    # schema-drifted non-comparison event carrying a `winner` key counted toward preferred values
+    # while being — correctly — excluded from win_counts.
     for ev in comparisons:
-        if ev.get("type") == "comparison":
-            # Guard against schema-drifted/partial records so a missing winner or
-            # loser can't be tallied as a ``None`` candidate in the summary.
-            winner, loser = ev.get("winner"), ev.get("loser")
-            if winner:
-                wins[winner] += 1
-            if loser:
-                losses[loser] += 1
-
-    # preferred descriptor values, learned from winners (if candidate records exist)
-    cand_store = state.read_candidates()
-    value_wins: Counter = Counter()
-    for ev in comparisons:
-        w = ev.get("winner")
-        rec = cand_store.get(w) if w else None
+        if ev.get("type") != "comparison":
+            continue
+        # Guard against schema-drifted/partial records so a missing winner or loser can't be
+        # tallied as a ``None`` candidate in the summary.
+        winner, loser = ev.get("winner"), ev.get("loser")
+        if loser:
+            losses[loser] += 1
+        if not winner:
+            continue
+        wins[winner] += 1
+        rec = cand_store.get(winner)
         if rec:
             for axis, val in (rec.get("descriptor") or {}).items():
                 if isinstance(val, (str, int, bool)):
@@ -224,13 +225,15 @@ def select_parents(
 
     # pins first, de-duplicated, order preserved — never dropped
     selected: List[str] = []
+    seen: set = set()  # membership twin of `selected` (order lives in the list, lookups here)
     for p in pins:
-        if p not in selected:
+        if p not in seen:
             selected.append(p)
+            seen.add(p)
 
     pool = [
         e for e in elite_ids
-        if e not in selected and e in emb_by_id and e not in discarded
+        if e not in seen and e in emb_by_id and e not in discarded
     ]
     remaining = max(0, k - len(selected))
     if not pool or remaining == 0:

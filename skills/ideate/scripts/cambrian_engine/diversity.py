@@ -22,10 +22,15 @@ from .config import debug_enabled
 # --------------------------------------------------------------------------- #
 # Kernel
 # --------------------------------------------------------------------------- #
+# The PSD stabilization jitter — one constant shared by build_kernel's default and select_diverse's
+# jitter-tied early-stop epsilon, which must track it (the value used to be restated locally).
+KERNEL_JITTER = 1e-6
+
+
 def build_kernel(
     vecs: np.ndarray,
     quality: Optional[np.ndarray] = None,
-    jitter: float = 1e-6,
+    jitter: float = KERNEL_JITTER,
 ) -> np.ndarray:
     """Build a PSD DPP kernel ``L = diag(q) (X Xᵀ) diag(q) + jitter·I``.
 
@@ -201,9 +206,8 @@ def select_diverse(
         # could never fire and the rank-deficiency top-up below would be dead code.
         # 10x the jitter flags "no real diversity left" without tripping on genuinely
         # diverse pools (whose gains are O(1)).
-        jitter = 1e-6
-        kernel = build_kernel(vecs, quality=quality, jitter=jitter)
-        sel = greedy_map_dpp(kernel, k, epsilon=10.0 * jitter)
+        kernel = build_kernel(vecs, quality=quality, jitter=KERNEL_JITTER)
+        sel = greedy_map_dpp(kernel, k, epsilon=10.0 * KERNEL_JITTER)
         if len(sel) >= min(k, n):
             return sel
         # Greedy stopped early (rank-deficient pool): top up with farthest-point,

@@ -17,17 +17,6 @@ import numpy as np
 from . import diversity
 
 
-def _pairwise_cos_distances(vecs: np.ndarray) -> np.ndarray:
-    """Upper-triangular cosine distances (1 - cos) over the rows; assumes L2-normalized
-    vectors, as the engine's embedders produce. Empty when fewer than 2 rows."""
-    n = vecs.shape[0]
-    if n < 2:
-        return np.zeros((0,), dtype=np.float64)
-    sims = vecs @ vecs.T
-    iu = np.triu_indices(n, k=1)
-    return (1.0 - sims[iu]).astype(np.float64)
-
-
 def surface_mechanism_gap(
     surface_vecs: Sequence[Sequence[float]],
     mechanism_vecs: Sequence[Sequence[float]],
@@ -53,8 +42,10 @@ def surface_mechanism_gap(
         }
     s_spread = float(diversity.mean_pairwise_distance(surf))
     m_spread = float(diversity.mean_pairwise_distance(mech))
-    s_pd = _pairwise_cos_distances(surf)
-    m_pd = _pairwise_cos_distances(mech)
+    # upper-triangular cosine distances via the shared pairwise primitive (this module used to
+    # re-implement exactly the helper diversity.pairwise_cosine_sims exists to single-home)
+    s_pd = 1.0 - diversity.pairwise_cosine_sims(surf)
+    m_pd = 1.0 - diversity.pairwise_cosine_sims(mech)
     corr = None
     if s_pd.shape[0] >= 2 and float(np.std(s_pd)) > 1e-9 and float(np.std(m_pd)) > 1e-9:
         corr = float(np.corrcoef(s_pd, m_pd)[0, 1])

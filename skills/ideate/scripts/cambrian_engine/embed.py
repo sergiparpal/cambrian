@@ -1,6 +1,6 @@
 """Pluggable text embeddings + near-duplicate suppression.
 
-Four providers, selected by the ``CAMBRIAN_EMBEDDER`` environment variable:
+Three providers, selected by the ``CAMBRIAN_EMBEDDER`` environment variable:
 
 * ``static`` — model2vec ``minishlab/potion-multilingual-128M`` (256-dim, **101
   languages**, distilled from ``BAAI/bge-m3``, MIT). Static embeddings, so
@@ -14,9 +14,9 @@ Four providers, selected by the ``CAMBRIAN_EMBEDDER`` environment variable:
 * ``hash``  — deterministic char-n-gram hashing vectorizer (no downloads). Used
   by the test suite and non-live ``selftest``. Lexically similar text → similar
   vectors, so dedup is meaningful.
-* ``api``   — a stub for a hosted provider (Voyage/Cohere/OpenAI), selected via
-  env so callers never change. Constructing it is cheap; embedding raises until
-  wired up.
+
+(``api`` is a *reserved* name for a hosted provider with no wired backend; selecting it
+raises a clean :class:`~.config.ConfigError` at selection time.)
 
 All embedders return an ``(n, d)`` float32 array of **L2-normalized** rows, so
 cosine similarity is a plain dot product.
@@ -33,6 +33,8 @@ import os
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from .config import ConfigError, require_sklearn
 
 ENV_VAR = "CAMBRIAN_EMBEDDER"
 DEFAULT_PROVIDER = "static"
@@ -109,6 +111,7 @@ class HashingEmbedder(Embedder):
     name = "hash"
 
     def __init__(self, dim: int = HASH_DIM):
+        require_sklearn("hash embedder")  # actionable ConfigError, not a raw ModuleNotFoundError
         from sklearn.feature_extraction.text import HashingVectorizer
 
         self.dim = dim
@@ -139,11 +142,27 @@ class StaticEmbedder(Embedder):
         self.dim = 0
 
     def _ensure(self):
-        if self._model is None:
+        if self._model is not None:
+            return self._model
+        try:
             from model2vec import StaticModel
-
+        except ImportError as exc:
+            raise ConfigError(
+                "Cambrian embedder unavailable: the 'model2vec' package is not installed in the "
+                "engine venv. Re-run provisioning (the SessionStart hook, or "
+                "`python skills/ideate/scripts/bootstrap.py`), or set CAMBRIAN_EMBEDDER=hash for "
+                "the deterministic offline embedder."
+            ) from exc
+        try:
             self._model = StaticModel.from_pretrained(self.model_name)
-            self.dim = int(self._model.dim)
+        except Exception as exc:
+            raise ConfigError(
+                f"Cambrian embedder unavailable: could not load model {self.model_name!r} "
+                f"({exc}). If you are offline, retry once the model has been downloaded (it is "
+                f"cached under $HF_HOME after the first use), or set CAMBRIAN_EMBEDDER=hash for "
+                f"the deterministic offline embedder."
+            ) from exc
+        self.dim = int(self._model.dim)
         return self._model
 
     def _dim_for_empty(self) -> int:
@@ -193,27 +212,6 @@ class LocalEmbedder(Embedder):
         )
 
 
-class APIEmbedder(Embedder):
-    """Stub for a hosted embedding provider, selected via env vars.
-
-    Construction is intentionally cheap so a provider switch loads without import
-    errors; actually embedding raises until a backend is wired up.
-    """
-
-    name = "api"
-
-    def __init__(self):
-        self.provider = os.environ.get("CAMBRIAN_EMBED_API", "voyage")
-        self.api_key = os.environ.get("CAMBRIAN_EMBED_API_KEY", "")
-        self.dim = 0
-
-    def _embed_raw(self, texts: List[str]) -> np.ndarray:  # pragma: no cover
-        raise NotImplementedError(
-            f"API embedder provider {self.provider!r} is a stub; set "
-            f"{ENV_VAR}=local or =hash, or wire up a backend in APIEmbedder."
-        )
-
-
 _CACHE: dict = {}
 
 
@@ -232,10 +230,15 @@ def get_embedder(provider: Optional[str] = None) -> Embedder:
     elif provider == "local":
         emb = LocalEmbedder()
     elif provider == "api":
-        emb = APIEmbedder()
+        # A named-but-unwired provider. The old APIEmbedder class existed solely to phrase this
+        # error at first USE; failing at SELECTION is clearer. Reintroduce a real class when a
+        # hosted backend lands.
+        raise ConfigError(
+            f"embedder provider 'api' has no wired backend; set {ENV_VAR}=static, =hash or =local"
+        )
     else:
         raise ValueError(
-            f"unknown embedder provider {provider!r}; expected static|hash|local|api"
+            f"unknown embedder provider {provider!r}; expected static|hash|local"
         )
     _CACHE[provider] = emb
     return emb
@@ -251,7 +254,7 @@ def reset_cache() -> None:
 # --------------------------------------------------------------------------- #
 def dedupe(
     vecs: np.ndarray,
-    tau: float = 0.92,
+    tau: float = DEFAULT_DEDUP_TAU,
     existing: Optional[np.ndarray] = None,
 ) -> Tuple[List[int], List[int]]:
     """Greedy near-duplicate removal over normalized rows.

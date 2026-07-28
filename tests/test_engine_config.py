@@ -18,6 +18,9 @@ from cambrian_engine.state import State
 
 def test_defaults_match_module_constants():
     # Drift guard: EngineConfig defaults mirror the module-level fallback constants.
+    # The pipeline constants are now DERIVED from a default EngineConfig, so for those this is a
+    # STRUCTURAL check (the names must exist and stay aligned) rather than a value-drift check;
+    # for the monitor/memory constants it remains a genuine value-drift guard.
     c = EngineConfig()
     assert c.open_niches == pipeline.OPEN_NICHES
     assert c.open_niche_freeze_factor == pipeline.OPEN_NICHE_FREEZE_FACTOR

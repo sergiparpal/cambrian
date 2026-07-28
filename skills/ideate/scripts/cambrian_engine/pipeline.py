@@ -33,33 +33,37 @@ from .config import AxesSpec, Candidate
 from .embed import dedupe, default_dedup_tau
 from .session import Session
 
-# Default tuning knobs. These are the **fallback defaults** for direct/library
-# callers and the self-test's placement helper; the real ``ingest`` path resolves
-# every knob from :class:`config.EngineConfig` (per-domain overridable). The values
-# here MUST mirror ``EngineConfig``'s defaults — ``test_engine_config`` guards that.
+# Default tuning knobs. These are the **fallback defaults** for direct/library callers and the
+# self-test's placement helper; the real ``ingest`` path resolves every knob from
+# :class:`config.EngineConfig` (per-domain overridable). DERIVED from a default ``EngineConfig`` —
+# the config dataclass is the single home for every value (these used to be hand-mirrored literals).
 #
 # The near-duplicate cosine threshold is per-embedder (see ``embed.default_dedup_tau``).
-KNN_K = 5
+_DEFAULTS = config.EngineConfig()
+KNN_K = _DEFAULTS.knn_k
 # Open-axis (mechanism) niching. The partition is data-adaptive: cold-start fixed
 # centroids until ``OPEN_NICHE_FREEZE_FACTOR * OPEN_NICHES`` mechanism embeddings
 # have accumulated, then a one-time k-means fit freezes the cells (see
 # ``_accumulate_and_maybe_freeze``).
-OPEN_NICHES = 24
+OPEN_NICHES = _DEFAULTS.open_niches
 # freeze after freeze_factor * open_niches survivor mechanisms accumulate. At 2 this
 # is 48 (~4-5 generations of 12) so the data-adaptive partition actually activates in
 # a realistic session, while keeping >=2 samples/centroid for a meaningful k-means
 # fit. Most short sessions still never reach it and run on the (validated) cold-start
 # partition; `ingest`/`metrics` expose accumulation progress so this is observable.
-OPEN_NICHE_FREEZE_FACTOR = 2
-MAX_DPP_POOL = 200
+OPEN_NICHE_FREEZE_FACTOR = _DEFAULTS.open_niche_freeze_factor
+MAX_DPP_POOL = _DEFAULTS.max_dpp_pool
 # Cap on the dedup/novelty reference set (the most-novel elites). Dedup and k-NN
 # novelty run against the archive elites every cycle (O(n·m)); without a cap this
 # grows unbounded. Below the cap behavior is identical to using every elite.
-NOVELTY_REF_CAP = 500
+NOVELTY_REF_CAP = _DEFAULTS.novelty_ref_cap
 # How much the judge's (bounded) fitness is allowed to weight the DPP slate.
 # 0 -> pure diversity; 1 -> full quality-diversity. Kept low so geometry owns
 # the slate and the judge can only nudge ordering within an already-diverse pool.
-QUALITY_WEIGHT = 0.3
+QUALITY_WEIGHT = _DEFAULTS.quality_weight
+# Bound on the persisted advisory gap series (entries in meta["gap_log"]); not an EngineConfig knob
+# — it caps storage, not behavior.
+GAP_LOG_CAP = 50
 
 
 # --------------------------------------------------------------------------- #
@@ -707,7 +711,7 @@ def _persist_cycle(
             "cycle": int(meta["cycles"]),
             **{k: gap_record[k] for k in ("surface_spread", "mechanism_spread", "gap", "corr", "n")},
         })
-        meta["gap_log"] = gap_log[-50:]  # bounded
+        meta["gap_log"] = gap_log[-GAP_LOG_CAP:]  # bounded
     state.write_meta(meta)
 
 
