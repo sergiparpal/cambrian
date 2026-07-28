@@ -8,6 +8,7 @@ axes:
   - {name: scope, type: categorical}        # how broad or narrow the idea is
   - {name: form, type: categorical}         # the shape/format of the output
   - {name: boldness, type: continuous, range: [0.0, 1.0]}  # safe <-> daring
+  - {name: feasibility, type: continuous, range: [0.0, 1.0]}  # far-fetched <-> buildable (coverage axis)
   - {name: mechanism, type: open, primary_novelty: true}   # the core "how"; novelty carrier
 judge_rubric: references/judge_rubric.md
 slate_size: 6

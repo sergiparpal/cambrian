@@ -92,9 +92,15 @@ this is the main novelty carrier. Then ask the user ONE short confirmation
 question, e.g.:
 
 > I'll spread ideas across these axes: **audience, register, format, edginess
-> (0–1), and mechanism** (the main novelty axis). Want to change any?
+> (0–1), and mechanism** (the main novelty axis). Running at *balanced* reach —
+> say *wild* for further-out or *conservative* for safer. Want to change any?
 
 Accept a quick tweak or an "ok". Do not block for long.
+
+The **same one-line confirm states the reach** (see `SKILL.md` → *Reach*): pick it from
+the user's phrasing if they gave one, else default to `balanced`. Reach is a
+language-layer directive only — it changes the descriptors you write and the operators
+you pick, never anything the engine computes. The user can change it any round.
 
 **(c) Generic fallback.** If you cannot infer well-separated axes, load
 `${CLAUDE_SKILL_DIR}/config/domains/generic.yaml` and tell the user you used
@@ -152,8 +158,15 @@ Rules:
   axis "how") for each idea, then realize each as a surface `text` — surface variety
   follows mechanism variety, never the reverse. This composes with the
   descriptor-discipline rule below (no two candidates share a `mechanism` string).
+  **Reach never narrows this — mechanism variety is always maximal.** Reach caps the
+  *degree* of divergence (`boldness`), never its *kind*.
 - `descriptor` keys must be exactly the resolved axis names. Continuous axes get a
   number in range; the `open`/primary axis gets a short free-text "how".
+  Spread continuous values to the **extremes of the reach band**, not the middle
+  (`balanced` → `boldness` in `[0, 0.75]`; see `operators.md` → "Descriptor
+  discipline"). When the axes carry `feasibility`, use it as the coverage axis it is
+  — `balanced` spreads across `[0.2, 1.0]` — and do **not** also fold plausibility
+  into `fitness`, or you double-count it.
 - Make each new idea differ from the ones already shown. If you have `parents`
   from a previous cycle, treat them as stepping stones to vary, not repeat.
 - Concrete beats abstract. One vivid sentence is better than a vague category.
@@ -164,7 +177,11 @@ Rules:
 
 Apply `judge_rubric.md`. Drop only candidates that are **invalid, off-brief, or
 incoherent**. Do NOT cut ideas for being weird, risky, or unlike the others —
-that is exactly the variety the engine needs. Optionally attach `fitness` (0–1)
+that is exactly the variety the engine needs. But weird and *incoherent* are
+different properties: see `judge_rubric.md` → "Coherence is not weirdness — tell
+them apart", whose one-line test ("can you say why the mechanism actually works?")
+is what separates a bold idea from an absurd one. Killing a broken idea does not
+count against your over-filtering budget. Optionally attach `fitness` (0–1)
 for within-niche ranking; never use it to reduce diversity. Pairwise comparison
 is allowed where it sharpens a validity call.
 
@@ -230,6 +247,11 @@ Show the `slate`. For each idea, show its `coords` (the niche buckets) so the us
 can see *why* it is considered distinct — e.g. "mechanism=cell7, edginess=b3".
 Surfacing coordinates is important: embedding-diversity is not always
 human-perceived distinctness, so let the user judge.
+
+**De-obscure each slate item.** Add a plain "*how it works in practice*" clause and one
+concrete instantiation ("e.g., …") so a bold idea reads as clear, not cryptic. If you
+cannot write that clause for an idea, it was incoherent and should have been cut at the
+prefilter — drop it now.
 
 Then ask ONLY the `ask_pairs`, as short A-vs-B questions:
 
@@ -306,7 +328,10 @@ is converging. Next round, raise diversity pressure:
 - switch to operators you haven't used (analogy/biomimicry/constraint-randomizer);
 - explicitly forbid the crowded niches ("no more X-mechanism ideas");
 - demand each new idea be far from the recent set;
-- widen an axis (e.g. push edginess to its extremes).
+- widen an axis (e.g. push edginess to its extremes);
+- consider **widening reach** for a round (`balanced` → `wild`, see `SKILL.md` →
+  *Reach*) so the operator mix and `boldness` band open up — mention it, since the
+  user can always override or pull it back.
 
 **Under-generation (prefilter guard).** If `monitor.under_generation` is true, far
 fewer candidates reached `ingest` than the per-generation target — you likely

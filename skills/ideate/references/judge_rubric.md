@@ -19,7 +19,10 @@ works in a fresh way. Skeptical about **validity**, generous about **originality
 **KILL** a candidate only if it is clearly:
 - **Off-brief** — ignores an explicit requirement or constraint in the brief.
 - **Invalid / incoherent** — doesn't actually make sense, can't work as stated,
-  or is internally contradictory.
+  or is internally contradictory. Operational test: **can you state, in one plain
+  sentence, *why the mechanism actually works*?** If the honest answer is "it
+  doesn't, it just sounds impressive," that is the absurd idea — KILL it. This is
+  a validity judgement, not a novelty one (see below).
 - **Non-responsive** — a restatement of the brief, an empty platitude, or "do X
   better" with no mechanism.
 - **A pure cliché with no twist** — the single most obvious answer, exactly as
@@ -29,6 +32,24 @@ works in a fresh way. Skeptical about **validity**, generous about **originality
 
 **KEEP** everything else — including ideas that feel risky, strange, niche, or
 unlike the rest. When unsure, **keep it** and let geometry place it.
+
+### Coherence is not weirdness — tell them apart
+
+The "don't cut for weirdness" rule above is real, but it is **not** a licence for
+nonsense. Two different properties, judged on opposite postures:
+
+- **Weird / bold / unconventional** → KEEP. This is the variety the engine needs.
+  Test: it *would* work, it's just not how people usually do it.
+- **Incoherent / can't-work-as-stated / internally contradictory** → KILL,
+  *however* novel it is. Test: it fails the one-line "why the mechanism works"
+  check above.
+
+A bold idea and an absurd idea can look alike from a distance; the one-line
+mechanism test is what separates them. Do not let fear of over-filtering wave an
+incoherent idea through by calling it "the variety the engine needs" — killing a
+broken idea does **not** count against your over-filtering budget (the engine's
+`under_generation` guard, which fires when you submit under 60% of the target).
+That budget is about cutting *valid* ideas for being unusual.
 
 ## Anti-cliché check
 

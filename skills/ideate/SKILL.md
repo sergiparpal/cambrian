@@ -6,9 +6,10 @@ description: >
   in chat. Use when the user asks to brainstorm, ideate, explore an idea space,
   find fresh/original angles, generate many distinct options, or escape clichéd
   or samey concepts — regardless of subject (marketing, product, research,
-  naming, design, fiction, strategy, etc.). The deterministic diversity engine
-  (embeddings, MAP-Elites, novelty, DPP, anti-collapse monitor) runs locally; you
-  do the generating and judging.
+  naming, design, fiction, strategy, etc.). A "reach" dial (conservative |
+  balanced | wild) tunes how far out the ideas go without narrowing their
+  variety. The deterministic diversity engine (embeddings, MAP-Elites, novelty,
+  DPP, anti-collapse monitor) runs locally; you do the generating and judging.
 allowed-tools: Bash, Read, Write
 ---
 
@@ -21,6 +22,31 @@ You amplify creativity by pairing **your** generation + judgment with a local
 from quality: geometry (the engine) decides what is *new*; you only filter what
 is *valid/on-brief* and rank *within* a niche. Never let the judge pick the final
 slate. The user is the real selector.
+
+## Reach — how far out (the divergence dial)
+
+Maximum divergence is not always what the user wants: it produces extravagant, and
+sometimes absurd or cryptic, ideas. **Reach** is the tempered middle band between
+greatest divergence and collapse-to-the-mean. It caps divergence in *degree*
+(`boldness`) and biases the operator mix and `feasibility` lean — it **never** caps
+divergence in *kind* (the `mechanism` axis always spreads maximally, so every slate
+is still made of genuinely different approaches).
+
+| reach | `boldness` band | `feasibility` lean | operators | feel |
+| --- | --- | --- | --- | --- |
+| `conservative` | `[0, 0.5]` | high (`0.6`–`1.0`) | recombinative | spirited but buildable |
+| **`balanced`** (default) | `[0, 0.75]` | spread `[0.2, 1.0]` | mixed | novel, still coherent |
+| `wild` | `[0, 1]` | full `[0, 1]` | far-reaching welcome | maximal divergence |
+
+Pick the reach from the user's phrasing if they gave one (in `$ARGUMENTS` or the brief's
+tone); otherwise **default to `balanced`** and mention it in the same one-line confirm as
+the axes (step 3) — e.g. "Running at *balanced* reach; say *wild* for further-out or
+*conservative* for safer." The user can change it any round.
+
+Reach is a **language-layer directive** you apply when assigning descriptors and choosing
+operators. The engine is unchanged: it still only measures dispersion over whatever you
+submit. Coherence (the judge's validity gate) is enforced at **every** reach — `wild` means
+further-out, never incoherent.
 
 Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
 
@@ -52,7 +78,8 @@ Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
    - **infer** 4–6 descriptor axes from the brief using
      `${CLAUDE_SKILL_DIR}/references/axis_inference.md` (mark exactly one `open`
      axis as the primary novelty carrier) and **confirm them with ONE short
-     question** the user can accept or tweak; else
+     question** the user can accept or tweak — the same one-line confirm also
+     states the **reach** (see *Reach* above); else
    - load `${CLAUDE_SKILL_DIR}/config/domains/generic.yaml`.
    Resolve the per-project scratch dir with `ENGINE paths --project PROJECT` and
    use its `tmp` field as `$TMP` (inside the state home, never your cwd) for every
@@ -101,7 +128,8 @@ Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
      anything, so lazy or duplicate descriptors collapse niches up front. Give no
      two candidates an identical `mechanism` string unless they genuinely share a
      mechanism (the open-axis `mechanism` text carries the primary-novelty niche);
-     prefer the **extremes** of continuous axes (e.g. `boldness`) over the middle;
+     prefer the **extremes of the reach band** (see *Reach* above) on continuous
+     axes (e.g. `boldness`) over the middle;
      and make each axis value **meaningfully distinct**, not a cosmetic variation.
      See `operators.md` → "Descriptor discipline".
 5. **Prefilter** yourself using `${CLAUDE_SKILL_DIR}/references/judge_rubric.md`
@@ -110,7 +138,9 @@ Follow `${CLAUDE_SKILL_DIR}/references/loop.md` exactly. Summary of one session:
 6. **Ingest.** Write survivors to `$TMP/candidates.json` and run
    `ENGINE ingest --project PROJECT --candidates $TMP/candidates.json --axes $TMP/axes.json`.
 7. **Present** the returned `slate` (show each idea with its niche `coords` so the
-   user can judge distinctness). Ask only the returned `ask_pairs` as short
+   user can judge distinctness). **De-obscure each item**: add a plain "how it works
+   in practice" clause and one concrete instantiation, so a bold idea reads as clear
+   rather than cryptic. Ask only the returned `ask_pairs` as short
    A-vs-B questions, then **explicitly invite the user to pin any idea they like as
    a "stepping stone" — including ideas that were NOT in the asked pairs** (e.g.
    "Want me to pin any of these to keep exploring from? — any of them, not just A/B").

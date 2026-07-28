@@ -8,6 +8,7 @@ axes:
   - {name: register, type: categorical}     # tone: deadpan / earnest / absurd / luxe ...
   - {name: format, type: categorical}       # film / OOH / stunt / UGC / product ...
   - {name: edginess, type: continuous, range: [0.0, 1.0]}  # safe <-> provocative
+  - {name: feasibility, type: continuous, range: [0.0, 1.0]}  # fantasy <-> producible (coverage axis)
   - {name: mechanism, type: open, primary_novelty: true}   # the core creative device
 judge_rubric: references/judge_rubric.md
 slate_size: 6

@@ -7,6 +7,9 @@ axes:
   - {name: locus, type: categorical}          # where the cause sits: product / market / ops ...
   - {name: population, type: categorical}     # which subjects/segment it concerns
   - {name: time_horizon, type: continuous, range: [0.0, 1.0]}  # acute <-> structural
+  # `testability` already IS this domain's feasibility coverage axis (far-fetched <-> testable),
+  # so no separate `feasibility` is added here — two axes that move together are the redundancy
+  # `axis_inference.md` tells you to drop.
   - {name: testability, type: continuous, range: [0.0, 1.0]}   # hard <-> easy to test
   - {name: causal_mechanism, type: open, primary_novelty: true}  # the proposed "why"
 judge_rubric: references/judge_rubric.md

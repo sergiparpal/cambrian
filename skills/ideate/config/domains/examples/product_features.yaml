@@ -8,6 +8,7 @@ axes:
   - {name: surface, type: categorical}        # onboarding / editor / dashboard / mobile ...
   - {name: job, type: categorical}            # the job-to-be-done it serves
   - {name: ambition, type: continuous, range: [0.0, 1.0]}  # quick win <-> moonshot
+  - {name: feasibility, type: continuous, range: [0.0, 1.0]}  # speculative <-> shippable (coverage axis)
   - {name: mechanism, type: open, primary_novelty: true}   # how it delivers the value
 judge_rubric: references/judge_rubric.md
 slate_size: 6

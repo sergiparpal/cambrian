@@ -18,6 +18,20 @@ new idea plus its descriptor and genealogy.
 When the monitor reports collapse, switch to operators you have not used this
 session, especially `analogy`, `biomimicry`, `random_stimulus`, and `inversion`.
 
+**Reach controls the operator *mix*** (see `SKILL.md` → *Reach*). The operators split by
+how far they reach from the brief:
+- *recombinative* (shorter reach) — `mutation`, `combination`, `morphological`,
+  `scamper`, `constraint`, `principle_first`: recombine and re-angle the brief's
+  own material.
+- *far-reaching* (longer reach) — `analogy` to distant domains, `transformation`
+  (10×/self-destruct), `random_stimulus`, `inversion`, `biomimicry`: jump to a
+  foreign source.
+
+`conservative` leans on the recombinative set; `balanced` mixes (mostly
+recombinative, one or two far-reaching per round); `wild` reaches freely. In every
+mode still apply **several different** operators per round — reach shrinks how far
+each jumps, never how many distinct angles you take.
+
 ---
 
 ## Core operators
@@ -115,8 +129,22 @@ Protect this input contract. For every candidate, fill the resolved axes honestl
 - **categorical** → pick the value that truly describes the idea (don't default
   everything to the same value — that collapses niches).
 - **continuous** → a number in range that reflects the idea. **Prefer the
-  extremes** (e.g. `boldness` near 0 or 1) over clustering everything in the
-  middle.
+  extremes of the allowed band** over clustering everything in the middle — but
+  the band itself is set by the **reach dial** (see `SKILL.md` → *Reach*). Under
+  `balanced` reach `boldness` lives in `[0, 0.75]`, under `conservative` in
+  `[0, 0.5]`; spread to the ends *of that band* (so niche resolution is
+  preserved), don't blow past it. Reach caps the *degree* of divergence
+  (`boldness`); it never caps divergence in *kind* (the `mechanism` axis, which
+  always spreads maximally).
+- **`feasibility`** (when the axes carry it) → how buildable-vs-far-fetched the
+  idea is, `0`–`1`. This is a **coverage axis**: because MAP-Elites keeps one
+  elite per feasibility bin, a bold idea can't evict a buildable one from its
+  niche, so the archive always *retains* practical options for the slate to draw
+  and for you to build from next round (a coverage guarantee, not a promise the
+  final six always contain one). Reach sets the lean: `conservative` clusters ideas
+  high (`0.6`–`1.0`, mostly buildable), `balanced` spreads across `[0.2, 1.0]`,
+  `wild` uses the full range. `feasibility` is a descriptor, **not** `fitness` —
+  don't fold plausibility into the fitness score too, or you double-count it.
 - **open / primary-novelty** → a few words naming the *core mechanism* — the
   thing that makes this idea work. The `mechanism` is **chosen first** (Layer 1 of
   generation: see `principle_first`), and the surface idea is written to express it —
