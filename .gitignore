@@ -28,3 +28,7 @@ dist/
 
 # Windows/WSL "mark of the web" metadata
 *:Zone.Identifier
+
+# burgess-plugin runtime artifacts (audit checkpoints, reconcile state) written into
+# the cwd of whatever repo it runs in — never content of this one
+.kg-*
