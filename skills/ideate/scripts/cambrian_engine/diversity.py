@@ -108,19 +108,30 @@ def farthest_point_sampling(
     k = min(k, n)
     if k <= 0:
         return []
-    dist = 1.0 - vecs @ vecs.T
+    # Lazy rows: the previous `dist = 1.0 - vecs @ vecs.T` materialized all n² distances up
+    # front, of which the walk only ever reads one row per pick plus the seed rows — ~200 MB and
+    # ~13 GFLOP at a 5k-elite parent pool, to select a handful of indices. One gemv row per pick
+    # is the identical greedy max-min walk in O((k+seeds)·n·d) flops and O(n) memory. The distance
+    # matrix is symmetric, so the old seed COLUMNS are these seed rows; the running elementwise
+    # minimum is order-independent. Values match the old matrix up to BLAS summation order (gemv
+    # vs gemm can differ in the last bit), which only matters on an exact argmax tie.
+    def row(j: int) -> np.ndarray:
+        return 1.0 - vecs @ vecs[j]
+
     if seeds:
         selected = [int(s) for s in seeds]
         # min cosine distance from each row to its nearest already-selected seed
-        min_d = dist[:, selected].min(axis=1)
+        min_d = row(selected[0])
+        for s in selected[1:]:
+            np.minimum(min_d, row(s), out=min_d)
     else:
         selected = [int(start)]
-        min_d = dist[start].copy()
+        min_d = row(start)
     while len(selected) < k:
         min_d[selected] = -np.inf
         j = int(np.argmax(min_d))
         selected.append(j)
-        min_d = np.minimum(min_d, dist[j])
+        np.minimum(min_d, row(j), out=min_d)
     return selected
 
 

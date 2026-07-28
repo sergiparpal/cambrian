@@ -10,7 +10,8 @@ isolate runs). Layout::
         axes.json                 # snapshot of the resolved axes
         archive.json              # MAP-Elites: niche_id -> niche record
         candidates.json           # id -> candidate record (genealogy kept)
-        embeddings.json           # id -> embedding vector
+        embeddings.npz            # id -> embedding vector (binary; legacy .json still read)
+        mech_embeddings.npz       # id -> mechanism/open-axis vector (advisory S4 store)
         tmp/                      # scratch dir for the skill's hand-off files
         memory/<domain>/
             comparisons.jsonl     # appended preference events
@@ -101,14 +102,14 @@ def _fsync_dir(directory: Path) -> None:
         os.close(dfd)
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            # Flush + fsync before the rename so a crash can't persist the rename
-            # ahead of the data (which would leave a zero-length/stale file).
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            # Flush + fsync before the rename so a crash can't persist the rename ahead of the
+            # data (which would leave a zero-length/stale file).
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
@@ -117,6 +118,10 @@ def _atomic_write(path: Path, text: str) -> None:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    _atomic_write_bytes(path, text.encode("utf-8"))
 
 
 def _steal_stale_lock(lock: Path) -> None:
@@ -213,10 +218,22 @@ class State:
 
     @property
     def embeddings_path(self) -> Path:
+        """Binary npz vector store. The pre-npz pretty-JSON shape re-parsed and rewrote tens of MB
+        of float reprs per ingest inside the project lock at large archives; values on disk are
+        float64, so the round-trip is exact. ``_legacy_embeddings_json`` is read as a fallback so a
+        project written by an older engine still loads."""
+        return self.root / "embeddings.npz"
+
+    @property
+    def _legacy_embeddings_json(self) -> Path:
         return self.root / "embeddings.json"
 
     @property
     def mech_embeddings_path(self) -> Path:
+        return self.root / "mech_embeddings.npz"
+
+    @property
+    def _legacy_mech_embeddings_json(self) -> Path:
         return self.root / "mech_embeddings.json"
 
     @property
@@ -288,6 +305,9 @@ class State:
         Best-effort: a missing file is not an error."""
         for path in (self.archive_path, self.candidates_path,
                      self.embeddings_path, self.mech_embeddings_path,
+                     # legacy pre-npz vector files: an older project's leftovers must not shadow a
+                     # fresh geometry via the tolerant fallback read.
+                     self._legacy_embeddings_json, self._legacy_mech_embeddings_json,
                      self.open_nicher_path):
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
@@ -322,8 +342,50 @@ class State:
                 f"backup) and retry"
             ) from exc
 
-    def write_json(self, path: Path, obj: Any) -> None:
-        _atomic_write(path, json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True))
+    def write_json(self, path: Path, obj: Any, *, compact: bool = False) -> None:
+        """``compact=True`` drops the indent/whitespace for big machine-only stores — values and
+        key order (sort_keys) are identical, only bytes shrink."""
+        _atomic_write(path, json.dumps(
+            obj, ensure_ascii=False, sort_keys=True,
+            indent=None if compact else 2,
+            separators=(",", ":") if compact else None,
+        ))
+
+    # -- vector stores (npz) ------------------------------------------------- #
+    def _read_vector_store(self, path: Path, legacy_json: Path) -> Dict[str, List[float]]:
+        """id -> vector store, npz-backed. ``.tolist()`` of the float64 rows returns the identical
+        Python floats ``json.loads`` produced from the legacy file, so consumers (and the
+        write/read roundtrip) are unchanged. Falls back to the legacy pretty-JSON file so a project
+        written by an older engine still reads; the next write lands the npz and removes the
+        legacy file."""
+        if path.exists():
+            import io
+
+            import numpy as np
+            try:
+                with np.load(io.BytesIO(path.read_bytes())) as z:
+                    # keys carry a "v:" prefix — see _write_vector_store.
+                    return {k[2:]: z[k].tolist() for k in z.files}
+            except Exception as exc:  # noqa: BLE001 — corrupt zip/npy: mirror read_json's posture
+                raise ConfigError(
+                    f"state file {path} is corrupt ({exc}); remove it (or restore a "
+                    f"backup) and retry"
+                ) from exc
+        return self.read_json(legacy_json, {}) or {}
+
+    def _write_vector_store(self, path: Path, legacy_json: Path,
+                            embeddings: Dict[str, List[float]]) -> None:
+        import io
+
+        import numpy as np
+        buf = io.BytesIO()
+        # Candidate ids are caller-supplied strings; the "v:" prefix keeps any id (e.g. a literal
+        # "file") from colliding with np.savez's own parameter names while round-tripping verbatim.
+        np.savez(buf, **{f"v:{k}": np.asarray(v, dtype=np.float64)
+                         for k, v in embeddings.items()})
+        _atomic_write_bytes(path, buf.getvalue())
+        with contextlib.suppress(OSError):
+            legacy_json.unlink(missing_ok=True)
 
     # -- typed accessors ---------------------------------------------------- #
     def read_meta(self) -> Dict[str, Any]:
@@ -348,26 +410,30 @@ class State:
         return self.read_json(self.candidates_path, {}) or {}
 
     def write_candidates(self, candidates: Dict[str, Any]) -> None:
-        self.write_json(self.candidates_path, candidates)
+        # compact: the largest JSON store (full idea texts + genealogy), machine-only.
+        self.write_json(self.candidates_path, candidates, compact=True)
 
     def read_embeddings(self) -> Dict[str, List[float]]:
-        return self.read_json(self.embeddings_path, {}) or {}
+        return self._read_vector_store(self.embeddings_path, self._legacy_embeddings_json)
 
     def write_embeddings(self, embeddings: Dict[str, List[float]]) -> None:
-        self.write_json(self.embeddings_path, embeddings)
+        self._write_vector_store(self.embeddings_path, self._legacy_embeddings_json, embeddings)
 
     def read_mech_embeddings(self) -> Dict[str, List[float]]:
-        return self.read_json(self.mech_embeddings_path, {}) or {}
+        return self._read_vector_store(self.mech_embeddings_path,
+                                       self._legacy_mech_embeddings_json)
 
     def write_mech_embeddings(self, embeddings: Dict[str, List[float]]) -> None:
-        self.write_json(self.mech_embeddings_path, embeddings)
+        self._write_vector_store(self.mech_embeddings_path,
+                                 self._legacy_mech_embeddings_json, embeddings)
 
     def read_open_nicher(self) -> Optional[Dict[str, Any]]:
         """Persisted open-axis nicher: cold-start accumulation or frozen centroids."""
         return self.read_json(self.open_nicher_path, None)
 
     def write_open_nicher(self, data: Dict[str, Any]) -> None:
-        self.write_json(self.open_nicher_path, data)
+        # compact: the pre-freeze accumulation buffer is up to freeze_factor*k raw vectors.
+        self.write_json(self.open_nicher_path, data, compact=True)
 
     # -- memory (namespaced by domain) ------------------------------------- #
     def append_comparison(self, domain: str, event: Dict[str, Any]) -> None:

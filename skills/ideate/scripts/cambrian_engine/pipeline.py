@@ -248,6 +248,7 @@ def assign_open_cells(
     seed: int,
     nicher: Optional["archive_mod.CVTNicher"] = None,
     open_niches: int = OPEN_NICHES,
+    surface_vecs: Optional[np.ndarray] = None,
 ) -> Tuple[Optional[Any], List[Optional[int]], np.ndarray]:
     """Voronoi cell per item for the primary "open" axis.
 
@@ -257,13 +258,30 @@ def assign_open_cells(
     When ``nicher`` is given (a frozen, data-fitted partition) it is used as-is;
     otherwise a deterministic cold-start partition is built. Shared by
     :func:`ingest` and the self-test so both place candidates identically.
+
+    ``surface_vecs`` (row-aligned with ``texts``) lets the caller hand over the surface
+    embeddings it already computed: an item whose open-axis text FALLS BACK to the idea text
+    (no descriptor value) reuses its surface row instead of re-embedding the identical string.
+    Exact by the embedder's per-string determinism — the same cross-call contract dedup already
+    relies on when it compares this batch against stored elite vectors.
     """
     open_axis = spec.primary_axis
     n = len(texts)
     if open_axis is None or n == 0:
         return open_axis, [None] * n, np.zeros((0, 1), dtype=np.float32)
     open_texts = _open_axis_texts(open_axis, descriptors, texts)
-    open_vecs = embedder.embed(open_texts)
+    if surface_vecs is not None and surface_vecs.shape[0] == n:
+        rows: List[Optional[np.ndarray]] = [
+            surface_vecs[i] if open_texts[i] == texts[i] else None for i in range(n)
+        ]
+        miss = [i for i, r in enumerate(rows) if r is None]
+        if miss:
+            fresh = embedder.embed([open_texts[i] for i in miss])
+            for j, i in enumerate(miss):
+                rows[i] = fresh[j]
+        open_vecs = np.asarray(rows, dtype=np.float32)
+    else:
+        open_vecs = embedder.embed(open_texts)
     if nicher is None:
         nicher = archive_mod.CVTNicher(dim=open_vecs.shape[1], k=open_niches, seed=seed)
     return open_axis, nicher.cells(open_vecs), open_vecs
@@ -506,6 +524,16 @@ def _guard_embedding_dim(
         )
 
 
+def _cap_by_novelty(arc: "archive_mod.Archive", ids: List[str], cap: int) -> List[str]:
+    """Keep the ``cap`` most-novel of ``ids`` (all of them, order untouched, when already within
+    cap). The ONE bounding rule for every quadratic pass over elite vectors — the dedup/novelty
+    reference and the metrics mechanism-spread snapshot."""
+    if len(ids) <= cap:
+        return ids
+    novelty_by_elite = {n.elite_id: n.novelty for n in arc.niches.values()}
+    return sorted(ids, key=lambda eid: novelty_by_elite.get(eid, 0.0), reverse=True)[:cap]
+
+
 def _novelty_reference_ids(
     arc: "archive_mod.Archive",
     stored_emb: Dict[str, List[float]],
@@ -521,12 +549,7 @@ def _novelty_reference_ids(
     """
     if cap is None:
         cap = NOVELTY_REF_CAP
-    ids = [eid for eid in arc.elite_ids() if eid in stored_emb]
-    if len(ids) <= cap:
-        return ids
-    novelty_by_elite = {n.elite_id: n.novelty for n in arc.niches.values()}
-    ids.sort(key=lambda eid: novelty_by_elite.get(eid, 0.0), reverse=True)
-    return ids[:cap]
+    return _cap_by_novelty(arc, [eid for eid in arc.elite_ids() if eid in stored_emb], cap)
 
 
 def _stack_embeddings(
@@ -551,7 +574,7 @@ def _place_survivors(
     open_vecs: Optional[np.ndarray] = None,
     mech_novelties: Optional[np.ndarray] = None,
     stored_mech_emb: Optional[Dict[str, List[float]]] = None,
-) -> None:
+) -> bool:
     """Insert each survivor into its niche; record its candidate + embedding.
 
     When the mechanism-space args are supplied (``open_vecs`` / ``mech_novelties`` /
@@ -559,7 +582,12 @@ def _place_survivors(
     its record and its mechanism embedding persisted to the parallel store. They are
     defaulted so the function stays safe to call without them (measurement only — see
     CLAUDE.md / S4); they never touch placement, the elite rule, or the surface store.
+
+    Returns ``True`` when this call actually changed ``stored_mech_emb`` — ``_persist_cycle``
+    uses it to skip a byte-identical rewrite of the advisory S4 store in the common
+    no-open-axis case.
     """
+    mech_dirty = False
     for idx, c in enumerate(survivors):
         ocell = {}
         if open_axis is not None and cells[idx] is not None:
@@ -575,6 +603,8 @@ def _place_survivors(
         if (stored_mech_emb is not None and open_vecs is not None
                 and open_axis is not None and idx < open_vecs.shape[0]):
             stored_mech_emb[c.id] = [float(x) for x in open_vecs[idx]]
+            mech_dirty = True
+    return mech_dirty
 
 
 def _select_slate(
@@ -635,13 +665,16 @@ def _persist_cycle(
     erosion_streak: int,
     gap_record=None,
     stored_mech_emb: Optional[Dict[str, List[float]]] = None,
+    mech_dirty: bool = True,
 ) -> None:
     """Write archive/embeddings/candidates, bump cycle metadata, roll the window."""
     state.write_archive(arc.to_dict())
     state.write_embeddings(stored_emb)
-    # Advisory parallel store (S4). Always written — even an empty {} — so the
-    # paths()-listed file is present on disk after any cycle (measurement only).
-    state.write_mech_embeddings(stored_mech_emb or {})
+    # Advisory parallel store (S4). Written when this cycle changed it OR the paths()-listed file
+    # is not on disk yet (so it is present — even as an empty {} — after any cycle); an unchanged
+    # store (the common no-open-axis case) skips a byte-identical rewrite.
+    if mech_dirty or not state.mech_embeddings_path.exists():
+        state.write_mech_embeddings(stored_mech_emb or {})
     state.write_candidates(cand_store)
     meta = state.read_meta()
     meta["cycles"] = int(meta.get("cycles", 0)) + 1
@@ -792,6 +825,7 @@ def _ingest_locked(
     open_axis, cells, open_vecs = assign_open_cells(
         spec, [c.descriptor for c in survivors], [c.text for c in survivors],
         embedder, seed, nicher=frozen_nicher, open_niches=econfig.open_niches,
+        surface_vecs=surv_vecs,  # fallback items reuse their surface row
     )
     novelties = _survivor_novelty(surv_vecs, existing_vecs, econfig.knn_k)
     # S2 — per-generation survivor mean novelty, fed to the variety-erosion sensor
@@ -803,7 +837,7 @@ def _ingest_locked(
         open_vecs, open_axis, existing_ids, stored_mech_emb,
         econfig.knn_k, len(survivors),
     )
-    _place_survivors(
+    mech_dirty = _place_survivors(
         survivors, surv_vecs, cells, novelties, open_axis,
         spec, arc, cand_store, stored_emb,
         open_vecs=open_vecs, mech_novelties=mech_novelties,
@@ -929,10 +963,13 @@ def _ingest_locked(
     for ev in comparisons:
         if ev.get("type") == "comparison":
             keep_ids.update(i for i in (ev.get("winner"), ev.get("loser")) if i)
+    mech_before = len(stored_mech_emb)
     _maybe_prune_state(
         cand_store, stored_emb, keep_ids, econfig.state_prune_threshold,
         stored_mech_emb=stored_mech_emb,
     )
+    if len(stored_mech_emb) != mech_before:
+        mech_dirty = True  # prune dropped mech entries — the store must be rewritten
 
     # Advisory surface/mechanism gap (measurement only; off by default). Never touches
     # selection, the monitor, the calibration window, or any gate — it only reads embeddings
@@ -949,7 +986,18 @@ def _ingest_locked(
             if open_axis is not None and len(slate_cands) >= 2:
                 descs = [c.get("descriptor", {}) for c in slate_cands]
                 texts = [c.get("text", "") for c in slate_cands]
-                mech_vecs = embedder.embed(_open_axis_texts(open_axis, descs, texts))
+                mech_texts = _open_axis_texts(open_axis, descs, texts)
+                # Reuse the persisted mechanism vectors — _place_survivors stored exactly these for
+                # every elite placed under an open axis — and embed only the misses (e.g. an elite
+                # placed before the S4 store existed). Exact by per-string embedder determinism;
+                # this probe used to re-embed the whole slate every cycle.
+                rows = [stored_mech_emb.get(c["id"]) for c in slate_cands]
+                miss = [i for i, r in enumerate(rows) if r is None]
+                if miss:
+                    fresh = embedder.embed([mech_texts[i] for i in miss])
+                    for j, i in enumerate(miss):
+                        rows[i] = fresh[j]
+                mech_vecs = np.asarray(rows, dtype=np.float32)
                 gap_record = gap.surface_mechanism_gap(slate_surf, mech_vecs)
             else:
                 gap_record = {"n": len(slate_cands), "surface_spread": 0.0,
@@ -961,7 +1009,7 @@ def _ingest_locked(
     _persist_cycle(
         state, arc, stored_emb, cand_store, vecs, embedder, mon, econfig,
         erosion["novelty_window"], erosion["erosion_streak"], gap_record=gap_record,
-        stored_mech_emb=stored_mech_emb,
+        stored_mech_emb=stored_mech_emb, mech_dirty=mech_dirty,
     )
     # Advisory slate-level mean mechanism novelty (S4); None when no item carries it.
     _mvals = [s["mechanism_novelty"] for s in slate
@@ -1002,7 +1050,10 @@ def metrics(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
     # The mean-pairwise-cosine snapshot is O(E²·d); cap the vectors it runs on to the
     # most-novel ``novelty_ref_cap`` elites so a large archive stays cheap. Entropy and
     # coverage still use the FULL niche occupancy (cheap counts) and ``n`` still reports
-    # the true elite count, so at/below the cap this is identical to before.
+    # the true elite count. At/below the cap this is identical to a full computation; ABOVE it,
+    # ``mean_cosine`` is over the most-novel subsample (which skews it toward "more diverse"), so
+    # ``mean_cosine_n`` below reports the actual sample size — measurement-only, it never gates
+    # selection, the monitor, or a verdict.
     cap = int(eng.get("novelty_ref_cap", NOVELTY_REF_CAP))
     cos_ids = _novelty_reference_ids(arc, stored_emb, cap=cap)
     # dim only matters in the empty case (the resulting (0, dim) array is never used in
@@ -1015,7 +1066,12 @@ def metrics(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
     # from the slate-scoped `mechanism_spread` inside `surface_mechanism_gap` (gap.py).
     # Measurement only — never feeds selection, the monitor, or any gate.
     stored_mech_emb = sess.state.read_mech_embeddings()
-    mech_ids = [i for i in elite_ids if i in stored_mech_emb]
+    # Same cap discipline as the surface snapshot above: this pass ran the O(N²·d) pairwise matrix
+    # over ALL elites' mechanism vectors while the surface pass was already capped, with the comment
+    # explaining why. At/below the cap the id set — and so the advisory number — is unchanged; above
+    # it, the cap most-novel. mech_spread is measurement-only (never feeds selection, the monitor,
+    # or any gate), so the cap cannot perturb behavior.
+    mech_ids = _cap_by_novelty(arc, [i for i in elite_ids if i in stored_mech_emb], cap)
     if len(mech_ids) >= 2:
         mdim = len(stored_mech_emb[mech_ids[0]])
         mvecs = np.asarray(
@@ -1028,6 +1084,7 @@ def metrics(project: str, home: Optional[Path] = None) -> Dict[str, Any]:
     result = {
         "entropy": mon["entropy"],
         "mean_cosine": mon["mean_cosine"],
+        "mean_cosine_n": len(cos_ids),   # elites mean_cosine ran on (< n above the cap)
         "coverage": mon["coverage"],
         "n": len(elite_ids),
         "mechanism_spread": mech_spread,
