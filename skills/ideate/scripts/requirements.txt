@@ -4,7 +4,7 @@
 # breaking major (e.g. numpy 3.x) on a user's machine. Bump caps deliberately.
 numpy>=2.4.6,<3          # diversity math (DPP log-det, Vendi eigvalsh, novelty); numpy 2.x tested
 scikit-learn>=1.4,<2    # HashingVectorizer for the deterministic 'hash' embedder + KMeans (open-axis freeze)
-pyyaml>=6,<7            # domain/axes config
+pyyaml>=6.0.3,<7            # domain/axes config
 model2vec>=0.8.2,<0.9     # default 'static' embedder: potion-multilingual-128M (256-dim, 101 langs); numpy-only, NO torch (~120 MB). Pre-1.0: 0.x MINOR bumps are the breaking unit (0.8.x tested), so cap at the next untested minor, not <1.
 # Dev/test tooling (pytest) lives in requirements-dev.txt so it is NOT shipped into
 # end-user installs. High-fidelity English 'local' embedder (BAAI/bge-small-en-v1.5)
