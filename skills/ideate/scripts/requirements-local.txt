@@ -10,4 +10,4 @@
 #
 # Note: 'local' is 384-dim vs. the default 'static' 256-dim, so a project must be
 # created under whichever embedder it will be ingested with — they cannot mix.
-sentence-transformers>=2.7,<6
+sentence-transformers>=5.6.1,<6
