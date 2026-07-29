@@ -428,6 +428,11 @@ measure stays non-circular — and reports it as a printed-only sanity number th
 - `config.ConfigError` messages are user-facing (printed by the CLI) — write them for the operator.
 - `docs/PAPER.md` is the reference-architecture paper (rationale and positioning), not the
   implementation spec — `SKILL.md` + this file are the spec.
-- **Git workflow:** commit work directly on `main` — do **not** create a new branch unless
-  the user explicitly asks for one. (Overrides the default "branch before committing on the
-  default branch" behavior.)
+- **Git workflow:** `main` is protected by a branch ruleset — direct pushes are rejected, and
+  merging requires the `ci-complete` status check to pass. So: branch, push, open a PR, let CI
+  go green, merge. Review approvals are **not** required (the count is 0), so a solo change is
+  still a one-person operation — the gate is CI, not a second pair of eyes. `ci-complete` is a
+  single aggregating job (`.github/workflows/ci.yml`) that fails unless `test`, `bootstrap`, and
+  `validate-plugin` all succeeded; the ruleset requires that one stable name rather than the
+  individual matrix legs, because a dropped Python version would otherwise become a required
+  check that never reports again and blocks every merge.

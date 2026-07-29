@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # The engine's dependency manifests do not live at the repo root — the Python package
+  # is bundled under the skill, so `requirements.txt`, `requirements-dev.txt`,
+  # `requirements-local.txt` and `pyproject.toml` all sit in `skills/ideate/scripts/`.
+  # Pointing `directory` at the root would silently watch nothing.
+  #
+  # Note the deps are compatible-release bounded on purpose (`numpy>=1.26,<3`, …): the
+  # upper bound is the next *untested* major, so an auto-provisioned end-user install can
+  # never adopt a breaking major on its own. Dependabot will therefore stop at the cap and
+  # open a PR proposing to raise it — that PR is the deliberate review moment for the bump,
+  # not noise to be auto-merged.
+  - package-ecosystem: pip
+    directory: "/skills/ideate/scripts"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

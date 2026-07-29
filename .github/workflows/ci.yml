@@ -15,15 +15,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The default token is already read-only at the repository level; declaring it here as well
+# keeps the guarantee visible in the file and survives a change to that repository setting.
+permissions:
+  contents: read
+
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Third-party actions are pinned to a full commit SHA, not a tag: a tag is mutable and can be
+# repointed by the upstream owner, a SHA cannot. The trailing comment records which release the
+# SHA corresponds to so Dependabot can still propose bumps and a human can still read it.
+
 jobs:
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -33,10 +43,10 @@ jobs:
       # Guarantee the deterministic, download-free embedder everywhere.
       CAMBRIAN_EMBEDDER: hash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -62,6 +72,7 @@ jobs:
     # at embed time, not install time.)
     name: bootstrap provisioner (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -70,10 +81,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -94,11 +105,12 @@ jobs:
   validate-plugin:
     name: validate plugin metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -127,7 +139,7 @@ jobs:
       # Best-effort: validate with the real Claude Code CLI if it installs cleanly.
       # This must never fail the job — it skips cleanly when the CLI is unavailable.
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
         continue-on-error: true
@@ -140,3 +152,20 @@ jobs:
           else
             echo "::notice::Claude Code CLI not installable in CI; skipping plugin validate"
           fi
+
+  ci-complete:
+    # One stable check name for the branch ruleset to require. Matrix legs come and go, so
+    # requiring them individually would turn a dropped Python version into a required check
+    # that never reports again — and an unsatisfiable required check blocks every merge.
+    # This job depends on the ones that must pass and fails unless all of them succeeded.
+    if: always()
+    needs: [test, bootstrap, validate-plugin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless every required job succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "A required job did not succeed:"
+          echo '${{ toJSON(needs) }}'
+          exit 1
