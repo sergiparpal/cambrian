@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cambrian-engine"
-version = "0.6.3"
+version = "0.6.4"
 description = "Deterministic diversity engine (MAP-Elites + geometric novelty + DPP + anti-collapse monitor) for the Cambrian skill"
 requires-python = ">=3.11"
 # Runtime dependencies are pinned in requirements.txt and installed separately so
