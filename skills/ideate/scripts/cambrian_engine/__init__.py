@@ -9,4 +9,4 @@ by the agent, not here. This package never judges novelty: geometry owns
 diversity, the judge only filters validity/on-brief upstream.
 """
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
