@@ -245,6 +245,13 @@ def merge_pr(pr: int, version: str) -> None:
     # Off the release branch first, so --delete-branch can clean up both copies.
     run("git", "checkout", "main")
     run("gh", "pr", "merge", str(pr), "--merge", "--delete-branch")
+    # --delete-branch drops the branch on origin and locally but leaves this clone's
+    # remote-tracking ref, so `git branch -a` keeps advertising a branch that is gone
+    # (v0.6.2 and v0.6.3 each left one). Cosmetic only — the preconditions ask origin
+    # directly and never consult these refs — so it must not be able to fail a release
+    # that has already merged, hence check=False. Deliberately no refspec: `fetch
+    # --prune origin main` would prune only within `main` and miss the release branch.
+    run("git", "fetch", "--prune", "origin", check=False)
     run("git", "pull", "--ff-only", "origin", "main")
     landed = read_current_version()
     if landed != version:
