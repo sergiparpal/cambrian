@@ -1,6 +1,6 @@
 {
   "name": "cambrian",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Domain-agnostic creative ideation: a blind-variation + diverse-archive loop that turns any brief into a non-cliche slate of ideas, backed by a local deterministic diversity engine (embeddings, MAP-Elites, k-NN novelty, DPP selection, anti-collapse monitor).",
   "author": {
     "name": "sergiparpal"
